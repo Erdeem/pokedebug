@@ -81,9 +81,3 @@ It also tries to detect Enigma-packed games and can offer unpack assistance befo
 - JoiPlay default overlay fallback: hold `A + B + C`
 - Custom mapped mobile overlay: `L + R` or `AUX1 + AUX2`
 - Event/script call: `pbPokeDebugMenu`
-
-## Recommended GitHub Note
-
-If you upload this project, it is a good idea to mention this clearly:
-
-> On JoiPlay/mobile, function keys may not work. Use the built-in fallback combo or call `pbPokeDebugMenu` from an event/script.
