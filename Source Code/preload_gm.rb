@@ -163,6 +163,11 @@ module PokeDebugBootstrap
 end
 
 begin
+  begin
+    require "zlib" unless defined?(Zlib)
+  rescue Exception => e
+    PokeDebugBootstrap.log_message("Bootstrap", "Zlib require failed: #{e.message}")
+  end
   PokeDebugBootstrap.activate_native_debug!
   PokeDebugBootstrap.defer_compiler_patch!
   plugin_path = File.expand_path("Plugins/God Mode/god_mode.rb", Dir.pwd)

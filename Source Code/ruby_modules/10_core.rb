@@ -922,11 +922,64 @@
       false
     end
 
+    def matched_ability_index_for(pkmn, ability_symbol)
+      return nil unless pkmn && ability_symbol
+      pokemon_legal_abilities(pkmn).each do |entry|
+        next unless entry.is_a?(Array) && entry.length >= 2
+        return entry[1] if entry[0] == ability_symbol
+        return entry[1] if entry[0].to_s == ability_symbol.to_s
+      end
+      nil
+    rescue => e
+      log_error("Match Ability Index", e)
+      nil
+    end
+
+    def set_pokemon_hidden_ability_flags!(pkmn, slot_index)
+      return false unless pkmn
+      hidden = (slot_index.to_i == 2)
+      changed = false
+      [:"hidden_ability=", :"hasHiddenAbility=", :"isHiddenAbility="].each do |writer|
+        next unless pkmn.respond_to?(writer)
+        pkmn.send(writer, hidden)
+        changed = true
+      end
+      [:@hiddenAbility, :@hidden_ability, :@hasHiddenAbility, :@isHiddenAbility].each do |ivar|
+        next unless pkmn.instance_variable_defined?(ivar) || hidden
+        pkmn.instance_variable_set(ivar, hidden)
+        changed = true
+      end
+      changed
+    rescue => e
+      log_error("Set Hidden Ability Flags", e)
+      false
+    end
+
+    def set_pokemon_internal_ability_fields!(pkmn, ability_symbol)
+      return false unless pkmn && ability_symbol
+      changed = false
+      [:@ability, :@ability_id, :@abilityID, :@forcedAbility, :@forced_ability].each do |ivar|
+        next unless pkmn.instance_variable_defined?(ivar) || ivar == :@ability
+        pkmn.instance_variable_set(ivar, ability_symbol)
+        changed = true
+      end
+      changed
+    rescue => e
+      log_error("Set Internal Ability Fields", e)
+      false
+    end
+
     def set_pokemon_ability!(pkmn, ability_symbol, force_index = nil)
       return false unless pkmn
+      matched_index = matched_ability_index_for(pkmn, ability_symbol)
+      target_index = force_index.nil? ? matched_index : force_index
       pkmn.ability = ability_symbol if pkmn.respond_to?(:ability=)
       pkmn.setAbility(ability_symbol) if pkmn.respond_to?(:setAbility)
-      pkmn.ability_index = force_index if !force_index.nil? && pkmn.respond_to?(:ability_index=)
+      if !target_index.nil? && pkmn.respond_to?(:ability_index=)
+        pkmn.ability_index = target_index
+      end
+      set_pokemon_hidden_ability_flags!(pkmn, target_index) unless target_index.nil?
+      set_pokemon_internal_ability_fields!(pkmn, ability_symbol)
       true
     rescue => e
       log_error("Set Ability", e)
@@ -937,6 +990,10 @@
       return false unless pkmn
       pkmn.ability_index = nil if pkmn.respond_to?(:ability_index=)
       pkmn.ability = nil if pkmn.respond_to?(:ability=)
+      set_pokemon_hidden_ability_flags!(pkmn, 0)
+      [:@ability, :@ability_id, :@abilityID, :@forcedAbility, :@forced_ability].each do |ivar|
+        pkmn.instance_variable_set(ivar, nil) if pkmn.instance_variable_defined?(ivar)
+      end
       true
     rescue => e
       log_error("Reset Ability", e)
@@ -1659,6 +1716,93 @@
       set_individual_stat_value!(pkmn, :ev, stat_def, value)
     end
 
+    def classic_iv_limit
+      31
+    end
+
+    def classic_ev_limit_per_stat
+      252
+    end
+
+    def classic_ev_total_limit
+      510
+    end
+
+    def numeric_stat_values(collection)
+      return [] if collection.nil?
+      values = if collection.is_a?(Hash)
+        collection.values
+      elsif collection.is_a?(Array)
+        collection
+      else
+        []
+      end
+      values.compact.map { |value| value.to_i }
+    rescue => e
+      log_error("Numeric Stat Values", e)
+      []
+    end
+
+    def pokemon_has_overcap_ivs?(pkmn)
+      iv_values = numeric_stat_values(stat_collection_value(pkmn, :iv))
+      return false if iv_values.empty?
+      iv_values.any? { |value| value > classic_iv_limit }
+    rescue => e
+      log_error("Overcap IV Check", e)
+      false
+    end
+
+    def pokemon_has_overcap_evs?(pkmn)
+      ev_values = numeric_stat_values(stat_collection_value(pkmn, :ev))
+      return false if ev_values.empty?
+      return true if ev_values.any? { |value| value > classic_ev_limit_per_stat }
+      ev_values.inject(0) { |sum, value| sum + value } > classic_ev_total_limit
+    rescue => e
+      log_error("Overcap EV Check", e)
+      false
+    end
+
+    def pokemon_has_overcap_stats?(pkmn)
+      return false unless pkmn
+      pokemon_has_overcap_ivs?(pkmn) || pokemon_has_overcap_evs?(pkmn)
+    rescue => e
+      log_error("Overcap Stat Check", e)
+      false
+    end
+
+    def extract_pokemon_like_objects(value, found = [])
+      return found if value.nil?
+      if pokemon_like_object?(value)
+        found << value
+        return found
+      end
+      if value.is_a?(Array)
+        value.each { |entry| extract_pokemon_like_objects(entry, found) }
+      elsif value.is_a?(Hash)
+        value.each_value { |entry| extract_pokemon_like_objects(entry, found) }
+      end
+      found
+    rescue => e
+      log_error("Extract Pokemon Like Objects", e)
+      found
+    end
+
+    def pokemon_like_object?(value)
+      return false if value.nil?
+      return true if value.respond_to?(:iv) || value.respond_to?(:ev)
+      return true if value.respond_to?(:personalID) || value.respond_to?(:species)
+      false
+    rescue
+      false
+    end
+
+    def overcap_stats_in_args?(*args)
+      extract_pokemon_like_objects(args).any? { |pkmn| pokemon_has_overcap_stats?(pkmn) }
+    rescue => e
+      log_error("Overcap Args Check", e)
+      false
+    end
+
     def advanced_stat_editor_lines(pkmn)
       stat_editor_definitions.map do |stat_def|
         iv = pokemon_iv_value(pkmn, stat_def)
@@ -2134,6 +2278,7 @@
       @processing_hotkey = true
       begin
         safe_execute("Input Update") do
+          ensure_runtime_patches!
           if menu_triggered?
             pbPlayDecisionSE if defined?(pbPlayDecisionSE)
             @mobile_combo_hold_frames = 0
@@ -2152,9 +2297,18 @@
     end
 
     def on_map_update
+      ensure_runtime_patches!
       if @walk_through_walls && $game_player
         $game_player.through = true
       end
+    end
+
+    def ensure_runtime_patches!
+      return unless respond_to?(:apply_runtime_patches!)
+      apply_runtime_patches!
+    rescue => e
+      log_error("Ensure Runtime Patches", e)
+      false
     end
 
     def toggle_wtw

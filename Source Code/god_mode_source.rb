@@ -1003,11 +1003,64 @@ module DeveloperMenu
       false
     end
 
+    def matched_ability_index_for(pkmn, ability_symbol)
+      return nil unless pkmn && ability_symbol
+      pokemon_legal_abilities(pkmn).each do |entry|
+        next unless entry.is_a?(Array) && entry.length >= 2
+        return entry[1] if entry[0] == ability_symbol
+        return entry[1] if entry[0].to_s == ability_symbol.to_s
+      end
+      nil
+    rescue => e
+      log_error("Match Ability Index", e)
+      nil
+    end
+
+    def set_pokemon_hidden_ability_flags!(pkmn, slot_index)
+      return false unless pkmn
+      hidden = (slot_index.to_i == 2)
+      changed = false
+      [:"hidden_ability=", :"hasHiddenAbility=", :"isHiddenAbility="].each do |writer|
+        next unless pkmn.respond_to?(writer)
+        pkmn.send(writer, hidden)
+        changed = true
+      end
+      [:@hiddenAbility, :@hidden_ability, :@hasHiddenAbility, :@isHiddenAbility].each do |ivar|
+        next unless pkmn.instance_variable_defined?(ivar) || hidden
+        pkmn.instance_variable_set(ivar, hidden)
+        changed = true
+      end
+      changed
+    rescue => e
+      log_error("Set Hidden Ability Flags", e)
+      false
+    end
+
+    def set_pokemon_internal_ability_fields!(pkmn, ability_symbol)
+      return false unless pkmn && ability_symbol
+      changed = false
+      [:@ability, :@ability_id, :@abilityID, :@forcedAbility, :@forced_ability].each do |ivar|
+        next unless pkmn.instance_variable_defined?(ivar) || ivar == :@ability
+        pkmn.instance_variable_set(ivar, ability_symbol)
+        changed = true
+      end
+      changed
+    rescue => e
+      log_error("Set Internal Ability Fields", e)
+      false
+    end
+
     def set_pokemon_ability!(pkmn, ability_symbol, force_index = nil)
       return false unless pkmn
+      matched_index = matched_ability_index_for(pkmn, ability_symbol)
+      target_index = force_index.nil? ? matched_index : force_index
       pkmn.ability = ability_symbol if pkmn.respond_to?(:ability=)
       pkmn.setAbility(ability_symbol) if pkmn.respond_to?(:setAbility)
-      pkmn.ability_index = force_index if !force_index.nil? && pkmn.respond_to?(:ability_index=)
+      if !target_index.nil? && pkmn.respond_to?(:ability_index=)
+        pkmn.ability_index = target_index
+      end
+      set_pokemon_hidden_ability_flags!(pkmn, target_index) unless target_index.nil?
+      set_pokemon_internal_ability_fields!(pkmn, ability_symbol)
       true
     rescue => e
       log_error("Set Ability", e)
@@ -1018,6 +1071,10 @@ module DeveloperMenu
       return false unless pkmn
       pkmn.ability_index = nil if pkmn.respond_to?(:ability_index=)
       pkmn.ability = nil if pkmn.respond_to?(:ability=)
+      set_pokemon_hidden_ability_flags!(pkmn, 0)
+      [:@ability, :@ability_id, :@abilityID, :@forcedAbility, :@forced_ability].each do |ivar|
+        pkmn.instance_variable_set(ivar, nil) if pkmn.instance_variable_defined?(ivar)
+      end
       true
     rescue => e
       log_error("Reset Ability", e)
@@ -1740,6 +1797,93 @@ module DeveloperMenu
       set_individual_stat_value!(pkmn, :ev, stat_def, value)
     end
 
+    def classic_iv_limit
+      31
+    end
+
+    def classic_ev_limit_per_stat
+      252
+    end
+
+    def classic_ev_total_limit
+      510
+    end
+
+    def numeric_stat_values(collection)
+      return [] if collection.nil?
+      values = if collection.is_a?(Hash)
+        collection.values
+      elsif collection.is_a?(Array)
+        collection
+      else
+        []
+      end
+      values.compact.map { |value| value.to_i }
+    rescue => e
+      log_error("Numeric Stat Values", e)
+      []
+    end
+
+    def pokemon_has_overcap_ivs?(pkmn)
+      iv_values = numeric_stat_values(stat_collection_value(pkmn, :iv))
+      return false if iv_values.empty?
+      iv_values.any? { |value| value > classic_iv_limit }
+    rescue => e
+      log_error("Overcap IV Check", e)
+      false
+    end
+
+    def pokemon_has_overcap_evs?(pkmn)
+      ev_values = numeric_stat_values(stat_collection_value(pkmn, :ev))
+      return false if ev_values.empty?
+      return true if ev_values.any? { |value| value > classic_ev_limit_per_stat }
+      ev_values.inject(0) { |sum, value| sum + value } > classic_ev_total_limit
+    rescue => e
+      log_error("Overcap EV Check", e)
+      false
+    end
+
+    def pokemon_has_overcap_stats?(pkmn)
+      return false unless pkmn
+      pokemon_has_overcap_ivs?(pkmn) || pokemon_has_overcap_evs?(pkmn)
+    rescue => e
+      log_error("Overcap Stat Check", e)
+      false
+    end
+
+    def extract_pokemon_like_objects(value, found = [])
+      return found if value.nil?
+      if pokemon_like_object?(value)
+        found << value
+        return found
+      end
+      if value.is_a?(Array)
+        value.each { |entry| extract_pokemon_like_objects(entry, found) }
+      elsif value.is_a?(Hash)
+        value.each_value { |entry| extract_pokemon_like_objects(entry, found) }
+      end
+      found
+    rescue => e
+      log_error("Extract Pokemon Like Objects", e)
+      found
+    end
+
+    def pokemon_like_object?(value)
+      return false if value.nil?
+      return true if value.respond_to?(:iv) || value.respond_to?(:ev)
+      return true if value.respond_to?(:personalID) || value.respond_to?(:species)
+      false
+    rescue
+      false
+    end
+
+    def overcap_stats_in_args?(*args)
+      extract_pokemon_like_objects(args).any? { |pkmn| pokemon_has_overcap_stats?(pkmn) }
+    rescue => e
+      log_error("Overcap Args Check", e)
+      false
+    end
+
     def advanced_stat_editor_lines(pkmn)
       stat_editor_definitions.map do |stat_def|
         iv = pokemon_iv_value(pkmn, stat_def)
@@ -2215,6 +2359,7 @@ module DeveloperMenu
       @processing_hotkey = true
       begin
         safe_execute("Input Update") do
+          ensure_runtime_patches!
           if menu_triggered?
             pbPlayDecisionSE if defined?(pbPlayDecisionSE)
             @mobile_combo_hold_frames = 0
@@ -2233,9 +2378,18 @@ module DeveloperMenu
     end
 
     def on_map_update
+      ensure_runtime_patches!
       if @walk_through_walls && $game_player
         $game_player.through = true
       end
+    end
+
+    def ensure_runtime_patches!
+      return unless respond_to?(:apply_runtime_patches!)
+      apply_runtime_patches!
+    rescue => e
+      log_error("Ensure Runtime Patches", e)
+      false
     end
 
     def toggle_wtw
@@ -3688,16 +3842,24 @@ module DeveloperMenu
 
 # --- BEGIN 50_runtime_patches.rb ---
 
-DeveloperMenu.initialize_variables if DeveloperMenu.walk_through_walls.nil?
+::DeveloperMenu.initialize_variables if ::DeveloperMenu.walk_through_walls.nil?
 
 if !$_gm_input_patched
   if defined?(Graphics) && Graphics.respond_to?(:update)
-    if DeveloperMenu.make_singleton_alias(Graphics, :_gm_original_graphics_update, :update)
+    if ::DeveloperMenu.make_singleton_alias(Graphics, :_gm_original_graphics_update, :update)
       class << Graphics
         def update
           _gm_original_graphics_update
-          DeveloperMenu.try_call("Graphics.update input hook") { DeveloperMenu.on_input_update }
-          DeveloperMenu.try_call("Graphics.update map hook") { DeveloperMenu.on_map_update }
+          begin
+            ::DeveloperMenu.on_input_update
+          rescue Exception => e
+            ::DeveloperMenu.log_error("Graphics.update input hook", e) if ::DeveloperMenu.respond_to?(:log_error)
+          end
+          begin
+            ::DeveloperMenu.on_map_update
+          rescue Exception => e
+            ::DeveloperMenu.log_error("Graphics.update map hook", e) if ::DeveloperMenu.respond_to?(:log_error)
+          end
         end
       end
     end
@@ -3709,149 +3871,187 @@ end
 # ENGINE MONKEY PATCHES (For Extras Category)
 # ===============================================================================
 
-# No Battles (v15-v19)
-if defined?(pbWildBattle)
-  unless defined?(_gm_orig_pbWildBattle_dev)
-    alias _gm_orig_pbWildBattle_dev pbWildBattle
-    def pbWildBattle(*args)
-      return true if DeveloperMenu.no_battles
-      _gm_orig_pbWildBattle_dev(*args)
-    end
+class << ::DeveloperMenu
+  def apply_runtime_patches!
+    apply_no_battles_patches!
+    apply_ev_gain_patches!
+    apply_infinite_mega_patches!
+    true
+  rescue => e
+    log_error("Apply Runtime Patches", e)
+    false
   end
-end
 
-if defined?(pbTrainerBattle)
-  unless defined?(_gm_orig_pbTrainerBattle_dev)
-    alias _gm_orig_pbTrainerBattle_dev pbTrainerBattle
-    def pbTrainerBattle(*args)
-      return true if DeveloperMenu.no_battles
-      _gm_orig_pbTrainerBattle_dev(*args)
-    end
-  end
-end
-
-# No Battles (v20+)
-if defined?(WildBattle) && WildBattle.respond_to?(:start)
-  if DeveloperMenu.make_singleton_alias(WildBattle, :_gm_orig_start_dev, :start)
-    class << WildBattle
-      def start(*args)
-        return 1 if DeveloperMenu.no_battles
-        _gm_orig_start_dev(*args)
+  def apply_no_battles_patches!
+    if defined?(pbWildBattle) && !defined?(_gm_orig_pbWildBattle_dev)
+      Object.send(:alias_method, :_gm_orig_pbWildBattle_dev, :pbWildBattle)
+      Object.send(:define_method, :pbWildBattle) do |*args|
+        return true if ::DeveloperMenu.no_battles
+        _gm_orig_pbWildBattle_dev(*args)
       end
-
-      ruby2_keywords(:start) if respond_to?(:ruby2_keywords, true)
     end
-  end
-end
 
-if defined?(TrainerBattle) && TrainerBattle.respond_to?(:start)
-  if DeveloperMenu.make_singleton_alias(TrainerBattle, :_gm_orig_start_dev, :start)
-    class << TrainerBattle
-      def start(*args)
-        return 1 if DeveloperMenu.no_battles
-        _gm_orig_start_dev(*args)
+    if defined?(pbTrainerBattle) && !defined?(_gm_orig_pbTrainerBattle_dev)
+      Object.send(:alias_method, :_gm_orig_pbTrainerBattle_dev, :pbTrainerBattle)
+      Object.send(:define_method, :pbTrainerBattle) do |*args|
+        return true if ::DeveloperMenu.no_battles
+        _gm_orig_pbTrainerBattle_dev(*args)
       end
-
-      ruby2_keywords(:start) if respond_to?(:ruby2_keywords, true)
-    end
-  end
-end
-
-# Overcap IV/EV compatibility:
-# Some Essentials v21 builds/plugins assume EVs never exceed the classic cap and
-# raise ArgumentError in post-battle EV gain. If the player intentionally set
-# overcap values with God Mode, just skip that EV gain instead of breaking flow.
-if defined?(Battle)
-  DeveloperMenu.make_alias(:_gm_orig_pbGainEVsOne_dev, :pbGainEVsOne, Battle)
-  Battle.class_eval do
-    def pbGainEVsOne(*args)
-      return _gm_orig_pbGainEVsOne_dev(*args) if defined?(_gm_orig_pbGainEVsOne_dev)
-      nil
-    rescue ArgumentError => e
-      DeveloperMenu.log_error("Battle EV Gain Compatibility", e)
-      nil
     end
 
-    ruby2_keywords(:pbGainEVsOne) if respond_to?(:ruby2_keywords, true)
-  end
-end
+    if defined?(WildBattle) && WildBattle.respond_to?(:start)
+      if ::DeveloperMenu.make_singleton_alias(WildBattle, :_gm_orig_start_dev, :start)
+        class << WildBattle
+          def start(*args)
+            return 1 if ::DeveloperMenu.no_battles
+            _gm_orig_start_dev(*args)
+          end
 
-if defined?(PokeBattle_Battle)
-  DeveloperMenu.make_alias(:_gm_orig_pbGainEVsOne_dev, :pbGainEVsOne, PokeBattle_Battle)
-  PokeBattle_Battle.class_eval do
-    def pbGainEVsOne(*args)
-      return _gm_orig_pbGainEVsOne_dev(*args) if defined?(_gm_orig_pbGainEVsOne_dev)
-      nil
-    rescue ArgumentError => e
-      DeveloperMenu.log_error("Legacy Battle EV Gain Compatibility", e)
-      nil
-    end
-  end
-end
-
-# Infinite Mega
-if defined?(PokeBattle_Battle)
-  DeveloperMenu.make_alias(:_gm_orig_pbHasMegaRing_dev, :pbHasMegaRing?, PokeBattle_Battle)
-  DeveloperMenu.make_alias(:_gm_orig_pbCanMegaEvolve_dev, :pbCanMegaEvolve?, PokeBattle_Battle)
-  PokeBattle_Battle.class_eval do
-    def pbHasMegaRing?(*args)
-      return true if DeveloperMenu.inf_mega
-      return _gm_orig_pbHasMegaRing_dev(*args) if defined?(_gm_orig_pbHasMegaRing_dev)
-      false
-    end
-
-    def pbCanMegaEvolve?(*args)
-      if DeveloperMenu.inf_mega
-        DeveloperMenu.try_call("Legacy Infinite Mega") do
-          @megaEvolution[args[0]][args[1]] = -1 if @megaEvolution && @megaEvolution[args[0]].is_a?(Array)
+          ruby2_keywords(:start) if respond_to?(:ruby2_keywords, true)
         end
       end
-      return _gm_orig_pbCanMegaEvolve_dev(*args) if defined?(_gm_orig_pbCanMegaEvolve_dev)
-      false
+    end
+
+    if defined?(TrainerBattle) && TrainerBattle.respond_to?(:start)
+      if ::DeveloperMenu.make_singleton_alias(TrainerBattle, :_gm_orig_start_dev, :start)
+        class << TrainerBattle
+          def start(*args)
+            return 1 if ::DeveloperMenu.no_battles
+            _gm_orig_start_dev(*args)
+          end
+
+          ruby2_keywords(:start) if respond_to?(:ruby2_keywords, true)
+        end
+      end
     end
   end
-end
 
-# Modern Infinite Mega (v20+)
-if defined?(Battle)
-  DeveloperMenu.make_alias(:_gm_orig_pbHasMegaRing_dev, :pbHasMegaRing?, Battle)
-  Battle.class_eval do
-    def pbHasMegaRing?(*args)
-      return true if DeveloperMenu.inf_mega
-      return _gm_orig_pbHasMegaRing_dev(*args) if defined?(_gm_orig_pbHasMegaRing_dev)
-      false
+  def apply_ev_gain_patches!
+    if defined?(Battle)
+      ::DeveloperMenu.make_alias(:_gm_orig_pbGainEVsOne_dev, :pbGainEVsOne, Battle)
+      ::DeveloperMenu.make_alias(:_gm_orig_pbGainExp_dev, :pbGainExp, Battle)
+      Battle.class_eval do
+        def pbGainEVsOne(*args)
+          if ::DeveloperMenu.overcap_stats_in_args?(*args)
+            ::DeveloperMenu.log_error("Battle EV Gain Overcap Skip", RuntimeError.new("Skipped native EV gain for overcap Pokemon."))
+            return nil
+          end
+          return _gm_orig_pbGainEVsOne_dev(*args) if defined?(_gm_orig_pbGainEVsOne_dev)
+          nil
+        rescue ArgumentError => e
+          ::DeveloperMenu.log_error("Battle EV Gain Compatibility", e)
+          nil
+        end
+
+        def pbGainExp(*args)
+          return _gm_orig_pbGainExp_dev(*args) if defined?(_gm_orig_pbGainExp_dev)
+          nil
+        rescue ArgumentError => e
+          ::DeveloperMenu.log_error("Battle Exp Gain Compatibility", e)
+          nil
+        end
+
+        ruby2_keywords(:pbGainEVsOne) if respond_to?(:ruby2_keywords, true)
+        ruby2_keywords(:pbGainExp) if respond_to?(:ruby2_keywords, true)
+      end
+    end
+
+    if defined?(PokeBattle_Battle)
+      ::DeveloperMenu.make_alias(:_gm_orig_pbGainEVsOne_dev, :pbGainEVsOne, PokeBattle_Battle)
+      ::DeveloperMenu.make_alias(:_gm_orig_pbGainExp_dev, :pbGainExp, PokeBattle_Battle)
+      PokeBattle_Battle.class_eval do
+        def pbGainEVsOne(*args)
+          if ::DeveloperMenu.overcap_stats_in_args?(*args)
+            ::DeveloperMenu.log_error("Legacy Battle EV Gain Overcap Skip", RuntimeError.new("Skipped native EV gain for overcap Pokemon."))
+            return nil
+          end
+          return _gm_orig_pbGainEVsOne_dev(*args) if defined?(_gm_orig_pbGainEVsOne_dev)
+          nil
+        rescue ArgumentError => e
+          ::DeveloperMenu.log_error("Legacy Battle EV Gain Compatibility", e)
+          nil
+        end
+
+        def pbGainExp(*args)
+          return _gm_orig_pbGainExp_dev(*args) if defined?(_gm_orig_pbGainExp_dev)
+          nil
+        rescue ArgumentError => e
+          ::DeveloperMenu.log_error("Legacy Battle Exp Compatibility", e)
+          nil
+        end
+      end
     end
   end
 
-  if defined?(Battle::Battler)
-    DeveloperMenu.make_alias(:_gm_orig_has_mega_dev, :has_mega?, Battle::Battler)
-    Battle::Battler.class_eval do
-      def has_mega?(*args)
-        if DeveloperMenu.inf_mega
-          DeveloperMenu.try_call("Modern Infinite Mega") do
-            @Battle.megaEvolution[0] = [-1] * 6 if @Battle && @Battle.respond_to?(:megaEvolution) && @Battle.megaEvolution
-            @Battle.megaEvolution[1] = [-1] * 6 if @Battle && @Battle.respond_to?(:megaEvolution) && @Battle.megaEvolution
+  def apply_infinite_mega_patches!
+    if defined?(PokeBattle_Battle)
+      ::DeveloperMenu.make_alias(:_gm_orig_pbHasMegaRing_dev, :pbHasMegaRing?, PokeBattle_Battle)
+      ::DeveloperMenu.make_alias(:_gm_orig_pbCanMegaEvolve_dev, :pbCanMegaEvolve?, PokeBattle_Battle)
+      PokeBattle_Battle.class_eval do
+        def pbHasMegaRing?(*args)
+          return true if ::DeveloperMenu.inf_mega
+          return _gm_orig_pbHasMegaRing_dev(*args) if defined?(_gm_orig_pbHasMegaRing_dev)
+          false
+        end
+
+        def pbCanMegaEvolve?(*args)
+          if ::DeveloperMenu.inf_mega
+            begin
+              @megaEvolution[args[0]][args[1]] = -1 if @megaEvolution && @megaEvolution[args[0]].is_a?(Array)
+            rescue Exception => e
+              ::DeveloperMenu.log_error("Legacy Infinite Mega", e) if ::DeveloperMenu.respond_to?(:log_error)
+            end
+          end
+          return _gm_orig_pbCanMegaEvolve_dev(*args) if defined?(_gm_orig_pbCanMegaEvolve_dev)
+          false
+        end
+      end
+    end
+
+    if defined?(Battle)
+      ::DeveloperMenu.make_alias(:_gm_orig_pbHasMegaRing_dev, :pbHasMegaRing?, Battle)
+      Battle.class_eval do
+        def pbHasMegaRing?(*args)
+          return true if ::DeveloperMenu.inf_mega
+          return _gm_orig_pbHasMegaRing_dev(*args) if defined?(_gm_orig_pbHasMegaRing_dev)
+          false
+        end
+      end
+
+      if defined?(Battle::Battler)
+        ::DeveloperMenu.make_alias(:_gm_orig_has_mega_dev, :has_mega?, Battle::Battler)
+        Battle::Battler.class_eval do
+          def has_mega?(*args)
+            if ::DeveloperMenu.inf_mega
+              begin
+                @Battle.megaEvolution[0] = [-1] * 6 if @Battle && @Battle.respond_to?(:megaEvolution) && @Battle.megaEvolution
+                @Battle.megaEvolution[1] = [-1] * 6 if @Battle && @Battle.respond_to?(:megaEvolution) && @Battle.megaEvolution
+              rescue Exception => e
+                ::DeveloperMenu.log_error("Modern Infinite Mega", e) if ::DeveloperMenu.respond_to?(:log_error)
+              end
+            end
+            return _gm_orig_has_mega_dev(*args) if defined?(_gm_orig_has_mega_dev)
+            false
           end
         end
-        return _gm_orig_has_mega_dev(*args) if defined?(_gm_orig_has_mega_dev)
-        false
       end
     end
   end
 end
+::DeveloperMenu.apply_runtime_patches!
 
 end
 
 def pbPokeDebugMenu
-  DeveloperMenu.open_menu_external
+  ::DeveloperMenu.open_menu_external
 end
 
 def pbDeveloperMenu
-  DeveloperMenu.open_menu_external
+  ::DeveloperMenu.open_menu_external
 end
 
 def pbGodModeMenu
-  DeveloperMenu.open_menu_external
+  ::DeveloperMenu.open_menu_external
 end
 # --- END 50_runtime_patches.rb ---
 
