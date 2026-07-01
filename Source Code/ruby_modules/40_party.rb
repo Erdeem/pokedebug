@@ -48,26 +48,64 @@
 
     def party_hp(pkmn)
       menu = [
-        { :label => "Heal", :action => proc { heal_pokemon!(pkmn); Kernel.pbMessage(_INTL("{1} was healed.", pkmn.name)) } },
+        { :label => "Heal", :action => proc {
+          if heal_pokemon!(pkmn)
+            Kernel.pbMessage(_INTL("{1} was healed.", pkmn.name))
+          else
+            Kernel.pbMessage(_INTL("Could not heal {1} on this engine.", pkmn.name))
+          end
+        } },
         { :label => "Edit HP", :action => proc {
           params = ChooseNumberParams.new; params.setRange(0, 999999); params.setInitialValue(pkmn.hp)
-          set_pokemon_hp!(pkmn, Kernel.pbMessageChooseNumber(_INTL("HP:"), params))
+          new_hp = Kernel.pbMessageChooseNumber(_INTL("HP:"), params)
+          if set_pokemon_hp!(pkmn, new_hp)
+            Kernel.pbMessage(_INTL("HP set to {1}.", pkmn.hp))
+          else
+            Kernel.pbMessage(_INTL("Could not edit HP on this engine."))
+          end
         }},
-        { :label => "Faint", :action => proc { faint_pokemon!(pkmn) } },
+        { :label => "Faint", :action => proc {
+          if faint_pokemon!(pkmn)
+            Kernel.pbMessage(_INTL("{1} fainted.", pkmn.name))
+          else
+            Kernel.pbMessage(_INTL("Could not faint {1} on this engine.", pkmn.name))
+          end
+        } },
         { :label => "Status Problem", :action => proc {
           status_hash = build_search_hash(:Status)
           status_id = search_list("Status", status_hash)
           if status_id
             sym = get_symbol(:Status, status_id)
-            set_pokemon_status!(pkmn, sym)
+            if set_pokemon_status!(pkmn, sym)
+              Kernel.pbMessage(_INTL("Status changed to {1}.", sym))
+            else
+              Kernel.pbMessage(_INTL("Could not change status on this engine."))
+            end
           end
         }},
         { :label => "Clear Status", :action => proc {
-          clear_pokemon_status!(pkmn)
-          Kernel.pbMessage(_INTL("Status cleared for {1}.", pkmn.name))
+          if clear_pokemon_status!(pkmn)
+            Kernel.pbMessage(_INTL("Status cleared for {1}.", pkmn.name))
+          else
+            Kernel.pbMessage(_INTL("Could not clear status on this engine."))
+          end
         }},
-        { :label => "Give Pokerus", :action => proc { pkmn.givePokerus if pkmn.respond_to?(:givePokerus); Kernel.pbMessage(_INTL("Infected with Pokerus!")) } },
-        { :label => "Cure Pokerus", :action => proc { pkmn.pokerus = 0 if pkmn.respond_to?(:pokerus=); Kernel.pbMessage(_INTL("Pokerus cured for {1}.", pkmn.name)) } }
+        { :label => "Give Pokerus", :action => proc {
+          if pkmn.respond_to?(:givePokerus)
+            pkmn.givePokerus
+            Kernel.pbMessage(_INTL("Infected with Pokerus!"))
+          else
+            Kernel.pbMessage(_INTL("Pokerus not supported on this engine."))
+          end
+        } },
+        { :label => "Cure Pokerus", :action => proc {
+          if pkmn.respond_to?(:pokerus=)
+            pkmn.pokerus = 0
+            Kernel.pbMessage(_INTL("Pokerus cured for {1}.", pkmn.name))
+          else
+            Kernel.pbMessage(_INTL("Pokerus not supported on this engine."))
+          end
+        } }
       ]
       render_dynamic_menu("HP / Status", menu)
     end
@@ -86,16 +124,27 @@
           party_advanced_stat_editor(pkmn)
         }},
         { :label => "Max IVs", :action => proc { 
-          max_pokemon_ivs!(pkmn, 31)
-          Kernel.pbMessage(_INTL("IVs Maxed!"))
+          if max_pokemon_ivs!(pkmn, 31)
+            Kernel.pbMessage(_INTL("IVs Maxed!"))
+          else
+            Kernel.pbMessage(_INTL("Could not max IVs on this engine."))
+          end
         }},
         { :label => "Max EVs", :action => proc { 
-          max_pokemon_evs!(pkmn, 252)
-          Kernel.pbMessage(_INTL("EVs Maxed!"))
+          if max_pokemon_evs!(pkmn, 252)
+            Kernel.pbMessage(_INTL("EVs Maxed!"))
+          else
+            Kernel.pbMessage(_INTL("Could not max EVs on this engine."))
+          end
         }},
         { :label => "Edit Happiness", :action => proc { 
           params = ChooseNumberParams.new; params.setRange(0, 255); params.setInitialValue(pkmn.happiness)
-          set_pokemon_happiness!(pkmn, Kernel.pbMessageChooseNumber(_INTL("Happiness:"), params))
+          new_happiness = Kernel.pbMessageChooseNumber(_INTL("Happiness:"), params)
+          if set_pokemon_happiness!(pkmn, new_happiness)
+            Kernel.pbMessage(_INTL("Happiness set to {1}.", new_happiness))
+          else
+            Kernel.pbMessage(_INTL("Could not edit happiness on this engine."))
+          end
         }},
         { :label => "Max Contest Stats", :action => proc {
           %w[beauty cool cute smart tough sheen].each { |s| pkmn.send("#{s}=", 255) if pkmn.respond_to?("#{s}=") }
@@ -173,20 +222,32 @@
           end
         }},
         { :label => "Reset Moveset", :action => proc {
-          reset_pokemon_moves!(pkmn)
-          Kernel.pbMessage(_INTL("Moveset reset!"))
+          if reset_pokemon_moves!(pkmn)
+            Kernel.pbMessage(_INTL("Moveset reset!"))
+          else
+            Kernel.pbMessage(_INTL("Could not reset moveset on this engine."))
+          end
         }},
         { :label => "Save Current as Initial Moveset", :action => proc {
-          record_pokemon_initial_moves!(pkmn)
-          Kernel.pbMessage(_INTL("Moveset recorded as Initial!"))
+          if record_pokemon_initial_moves!(pkmn)
+            Kernel.pbMessage(_INTL("Moveset recorded as Initial!"))
+          else
+            Kernel.pbMessage(_INTL("Could not record initial moves on this engine."))
+          end
         }},
         { :label => "Restore PP", :action => proc {
-          restore_pokemon_pp!(pkmn)
-          Kernel.pbMessage(_INTL("PP Restored!"))
+          if restore_pokemon_pp!(pkmn)
+            Kernel.pbMessage(_INTL("PP Restored!"))
+          else
+            Kernel.pbMessage(_INTL("Could not restore PP on this engine."))
+          end
         }},
         { :label => "Max PP Ups", :action => proc {
-          max_pokemon_ppups!(pkmn, 3)
-          Kernel.pbMessage(_INTL("PP Ups maxed!"))
+          if max_pokemon_ppups!(pkmn, 3)
+            Kernel.pbMessage(_INTL("PP Ups maxed!"))
+          else
+            Kernel.pbMessage(_INTL("Could not edit PP Ups on this engine."))
+          end
         }}
       ]
       render_dynamic_menu("Moves", menu)
@@ -202,11 +263,19 @@
           item_id = search_list("Items", hash)
           if item_id
             sym = get_symbol(:Item, item_id)
-            set_pokemon_item!(pkmn, sym)
+            if set_pokemon_item!(pkmn, sym)
+              Kernel.pbMessage(_INTL("Held item set to {1}.", item_display_name(sym)))
+            else
+              Kernel.pbMessage(_INTL("Could not set held item on this engine."))
+            end
           end
         }},
         { :label => "Remove Held Item", :action => proc {
-          remove_pokemon_item!(pkmn)
+          if remove_pokemon_item!(pkmn)
+            Kernel.pbMessage(_INTL("Held item removed."))
+          else
+            Kernel.pbMessage(_INTL("Could not remove held item on this engine."))
+          end
         }}
       ]
       render_dynamic_menu("Held Item", menu)
@@ -230,12 +299,19 @@
           id = search_list("Abilities", hash)
           if id
             sym = get_symbol(:Ability, id)
-            set_pokemon_ability!(pkmn, sym, 2)
+            if set_pokemon_ability!(pkmn, sym, 2)
+              Kernel.pbMessage(_INTL("Ability set to {1}.", ability_display_name(sym)))
+            else
+              Kernel.pbMessage(_INTL("Could not set ability on this engine."))
+            end
           end
         }},
         { :label => "Reset Ability", :action => proc {
-          reset_pokemon_ability!(pkmn)
-          Kernel.pbMessage(_INTL("Ability reset!"))
+          if reset_pokemon_ability!(pkmn)
+            Kernel.pbMessage(_INTL("Ability reset!"))
+          else
+            Kernel.pbMessage(_INTL("Could not reset ability on this engine."))
+          end
         }},
         { :label => "Export Ability IDs", :action => proc {
           dump_ids(:Ability, "Ability_ID_List.txt")
@@ -251,7 +327,11 @@
           id = search_list("Natures", hash)
           if id
             sym = get_symbol(:Nature, id)
-            set_pokemon_nature!(pkmn, sym)
+            if set_pokemon_nature!(pkmn, sym)
+              Kernel.pbMessage(_INTL("Nature set to {1}.", sym))
+            else
+              Kernel.pbMessage(_INTL("Could not change nature on this engine."))
+            end
           end
         }},
         { :label => "Set Legal Gender", :action => proc {
@@ -261,9 +341,27 @@
             Kernel.pbMessage(_INTL("Pokemon is genderless or not supported."))
           end
         }},
-        { :label => "Force Gender (Male)", :action => proc { set_pokemon_gender!(pkmn, :male) } },
-        { :label => "Force Gender (Female)", :action => proc { set_pokemon_gender!(pkmn, :female) } },
-        { :label => "Force Gender (Genderless)", :action => proc { set_pokemon_gender!(pkmn, :genderless) } }
+        { :label => "Force Gender (Male)", :action => proc {
+          if set_pokemon_gender!(pkmn, :male)
+            Kernel.pbMessage(_INTL("Gender forced to male."))
+          else
+            Kernel.pbMessage(_INTL("Could not force gender on this engine."))
+          end
+        } },
+        { :label => "Force Gender (Female)", :action => proc {
+          if set_pokemon_gender!(pkmn, :female)
+            Kernel.pbMessage(_INTL("Gender forced to female."))
+          else
+            Kernel.pbMessage(_INTL("Could not force gender on this engine."))
+          end
+        } },
+        { :label => "Force Gender (Genderless)", :action => proc {
+          if set_pokemon_gender!(pkmn, :genderless)
+            Kernel.pbMessage(_INTL("Gender forced to genderless."))
+          else
+            Kernel.pbMessage(_INTL("Could not force gender on this engine."))
+          end
+        } }
       ]
       render_dynamic_menu("Nature & Gender", menu)
     end
@@ -275,17 +373,28 @@
           id = search_list("Species", hash)
           if id
             sym = get_symbol(:Species, id)
-            set_pokemon_species!(pkmn, sym)
+            if set_pokemon_species!(pkmn, sym)
+              Kernel.pbMessage(_INTL("Species changed to {1}.", pokemon_species_name(pkmn)))
+            else
+              Kernel.pbMessage(_INTL("Could not change species on this engine."))
+            end
           end
         }},
         { :label => "Change Form", :action => proc {
           params = ChooseNumberParams.new; params.setRange(0, 50); params.setInitialValue(pkmn.form || 0)
           new_form = Kernel.pbMessageChooseNumber(_INTL("Form ID:"), params)
-          set_pokemon_form!(pkmn, new_form)
+          if set_pokemon_form!(pkmn, new_form)
+            Kernel.pbMessage(_INTL("Form set to {1}.", new_form))
+          else
+            Kernel.pbMessage(_INTL("Could not change form on this engine."))
+          end
         }},
         { :label => "Remove Form Override", :action => proc {
-          clear_pokemon_form_override!(pkmn)
-          Kernel.pbMessage(_INTL("Override removed!"))
+          if clear_pokemon_form_override!(pkmn)
+            Kernel.pbMessage(_INTL("Override removed!"))
+          else
+            Kernel.pbMessage(_INTL("Could not remove form override on this engine."))
+          end
         }}
       ]
       render_dynamic_menu("Species & Form", menu)
@@ -298,13 +407,20 @@
         }},
         { :label => "Toggle Shiny", :action => proc {
           current = pkmn.respond_to?(:shiny?) ? pkmn.shiny? : (pkmn.respond_to?(:shiny) ? pkmn.shiny : false)
-          set_pokemon_shiny!(pkmn, !current)
-          Kernel.pbMessage(_INTL("Shiny: {1}", !current ? "ON" : "OFF"))
+          if set_pokemon_shiny!(pkmn, !current)
+            Kernel.pbMessage(_INTL("Shiny: {1}", !current ? "ON" : "OFF"))
+          else
+            Kernel.pbMessage(_INTL("Could not change shiny state on this engine."))
+          end
         }},
         { :label => "Set Poke ball", :action => proc {
           id = choose_poke_ball_id
           if id
-            set_pokemon_ball!(pkmn, id)
+            if set_pokemon_ball!(pkmn, id)
+              Kernel.pbMessage(_INTL("Poke Ball updated."))
+            else
+              Kernel.pbMessage(_INTL("Could not change Poke Ball on this engine."))
+            end
           end
         }},
         { :label => "Add Ribbon", :action => proc {
@@ -312,12 +428,19 @@
           id = search_list("Ribbons", hash)
           if id
             sym = get_symbol(:Ribbon, id)
-            add_pokemon_ribbon!(pkmn, sym)
+            if add_pokemon_ribbon!(pkmn, sym)
+              Kernel.pbMessage(_INTL("Ribbon added."))
+            else
+              Kernel.pbMessage(_INTL("Could not add ribbon on this engine."))
+            end
           end
         }},
         { :label => "Clear All Ribbons", :action => proc {
-          clear_pokemon_ribbons!(pkmn)
-          Kernel.pbMessage(_INTL("Ribbons cleared!"))
+          if clear_pokemon_ribbons!(pkmn)
+            Kernel.pbMessage(_INTL("Ribbons cleared!"))
+          else
+            Kernel.pbMessage(_INTL("Could not clear ribbons on this engine."))
+          end
         }},
         { :label => "Change OT Name", :action => proc {
           rename_pokemon_ot_via_ui!(pkmn)
@@ -328,9 +451,30 @@
 
     def party_flags(pkmn)
       menu = [
-        { :label => "Toggle Cannot Store", :action => proc { pkmn.cannot_store = !pkmn.cannot_store if pkmn.respond_to?(:cannot_store=); Kernel.pbMessage(_INTL("Cannot Store: {1}", pkmn.respond_to?(:cannot_store) ? on_off_text(!!pkmn.cannot_store) : "N/A")) } },
-        { :label => "Toggle Cannot Release", :action => proc { pkmn.cannot_release = !pkmn.cannot_release if pkmn.respond_to?(:cannot_release=); Kernel.pbMessage(_INTL("Cannot Release: {1}", pkmn.respond_to?(:cannot_release) ? on_off_text(!!pkmn.cannot_release) : "N/A")) } },
-        { :label => "Toggle Cannot Trade", :action => proc { pkmn.cannot_trade = !pkmn.cannot_trade if pkmn.respond_to?(:cannot_trade=); Kernel.pbMessage(_INTL("Cannot Trade: {1}", pkmn.respond_to?(:cannot_trade) ? on_off_text(!!pkmn.cannot_trade) : "N/A")) } }
+        { :label => "Toggle Cannot Store", :action => proc {
+          if pkmn.respond_to?(:cannot_store=)
+            pkmn.cannot_store = !pkmn.cannot_store
+            Kernel.pbMessage(_INTL("Cannot Store: {1}", pkmn.respond_to?(:cannot_store) ? on_off_text(!!pkmn.cannot_store) : "N/A"))
+          else
+            Kernel.pbMessage(_INTL("Cannot Store flag not supported on this engine."))
+          end
+        } },
+        { :label => "Toggle Cannot Release", :action => proc {
+          if pkmn.respond_to?(:cannot_release=)
+            pkmn.cannot_release = !pkmn.cannot_release
+            Kernel.pbMessage(_INTL("Cannot Release: {1}", pkmn.respond_to?(:cannot_release) ? on_off_text(!!pkmn.cannot_release) : "N/A"))
+          else
+            Kernel.pbMessage(_INTL("Cannot Release flag not supported on this engine."))
+          end
+        } },
+        { :label => "Toggle Cannot Trade", :action => proc {
+          if pkmn.respond_to?(:cannot_trade=)
+            pkmn.cannot_trade = !pkmn.cannot_trade
+            Kernel.pbMessage(_INTL("Cannot Trade: {1}", pkmn.respond_to?(:cannot_trade) ? on_off_text(!!pkmn.cannot_trade) : "N/A"))
+          else
+            Kernel.pbMessage(_INTL("Cannot Trade flag not supported on this engine."))
+          end
+        } }
       ]
       render_dynamic_menu("Discardable Flags", menu)
     end
@@ -338,16 +482,25 @@
     def party_egg(pkmn)
       menu = [
         { :label => "Make Egg", :action => proc { 
-          make_pokemon_egg!(pkmn)
-          Kernel.pbMessage(_INTL("{1} was turned into an Egg.", pkmn.name))
+          if make_pokemon_egg!(pkmn)
+            Kernel.pbMessage(_INTL("{1} was turned into an Egg.", pkmn.name))
+          else
+            Kernel.pbMessage(_INTL("Could not turn {1} into an Egg on this engine.", pkmn.name))
+          end
         }},
         { :label => "Hatch Egg", :action => proc { 
-          hatch_pokemon_egg!(pkmn)
-          Kernel.pbMessage(_INTL("{1} hatched successfully.", pkmn.name))
+          if hatch_pokemon_egg!(pkmn)
+            Kernel.pbMessage(_INTL("{1} hatched successfully.", pkmn.name))
+          else
+            Kernel.pbMessage(_INTL("Could not hatch {1} on this engine.", pkmn.name))
+          end
         }},
         { :label => "1 Step to Hatch", :action => proc { 
-          set_pokemon_hatch_steps!(pkmn, 1)
-          Kernel.pbMessage(_INTL("{1} will hatch in 1 step.", pkmn.name))
+          if set_pokemon_hatch_steps!(pkmn, 1)
+            Kernel.pbMessage(_INTL("{1} will hatch in 1 step.", pkmn.name))
+          else
+            Kernel.pbMessage(_INTL("Could not edit hatch steps on this engine."))
+          end
         }}
       ]
       render_dynamic_menu("Egg Options", menu)
@@ -357,8 +510,11 @@
       return unless Kernel.pbConfirmMessage(_INTL("Duplicate {1}?", pkmn.name))
       clone = duplicate_pokemon(pkmn)
       return Kernel.pbMessage(_INTL("Could not duplicate this Pokemon.")) unless clone
-      add_pkmn_silently(clone)
-      Kernel.pbMessage(_INTL("Duplicated!"))
+      if add_pkmn_silently(clone)
+        Kernel.pbMessage(_INTL("Duplicated!"))
+      else
+        Kernel.pbMessage(_INTL("Could not add the duplicate on this engine."))
+      end
     end
 
     def party_export_preset(pkmn)

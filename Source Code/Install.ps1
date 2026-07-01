@@ -78,6 +78,11 @@ function Get-InjectionStrategy {
         $strategy.Confidence = "High"
         $strategy.Summary = "Preload bootstrap plus direct RGSS script patch."
         $strategy.Color = "Green"
+    } elseif ($Diagnostics.HasMkxp -and ($Diagnostics.HasPluginsDir -or $Diagnostics.HasPreloadFile)) {
+        $strategy.Name = "MKXP Plugin Layout"
+        $strategy.Confidence = "High"
+        $strategy.Summary = "Project already looks plugin-ready; preload bootstrap should fit cleanly."
+        $strategy.Color = "Green"
     } elseif ($Diagnostics.HasMkxp) {
         $strategy.Name = "MKXP Preload"
         $strategy.Confidence = "High"
@@ -203,6 +208,9 @@ function Get-InstallDiagnostics {
     $dataDir = Join-Path $ResolvedGameDir "Data"
     $rxDataPath = Join-Path $ResolvedGameDir "Data\Scripts.rxdata"
     $pluginScripts = Join-Path $ResolvedGameDir "Data\PluginScripts.rxdata"
+    $pluginsDir = Join-Path $ResolvedGameDir "Plugins"
+    $preloadPath = Join-Path $ResolvedGameDir "preload_gm.rb"
+    $iniPath = Get-GameIniPath $ResolvedGameDir
     $archive = Get-ChildItem -Path $ResolvedGameDir -Filter "*.rgss*a*" -ErrorAction SilentlyContinue | Select-Object -First 1
     $enigma = Test-EnigmaPackedGame $ResolvedGameDir
 
@@ -221,6 +229,10 @@ function Get-InstallDiagnostics {
     $diagnostics["HasRgssArchive"] = $hasRgssArchive
     $diagnostics["ArchiveName"] = $archiveName
     $diagnostics["HasPluginScripts"] = (Test-Path $pluginScripts -PathType Leaf)
+    $diagnostics["HasPluginsDir"] = (Test-Path $pluginsDir -PathType Container)
+    $diagnostics["HasPreloadFile"] = (Test-Path $preloadPath -PathType Leaf)
+    $diagnostics["IniPath"] = $iniPath
+    $diagnostics["HasIni"] = (Test-Path $iniPath -PathType Leaf)
     $diagnostics["EnigmaPacked"] = $enigma.Packed
     $diagnostics["EnigmaConfidence"] = $enigma.Confidence
     $diagnostics["EnigmaEvidence"] = $enigma.Evidence
@@ -249,6 +261,12 @@ function Show-InstallDiagnostics {
     Log ("Scripts.rxdata: {0}" -f (Format-State $Diagnostics["HasScriptsRxdata"])) "Gray"
     Log ("RGSS archive: {0}" -f $archiveLabel) "Gray"
     Log ("PluginScripts.rxdata: {0}" -f (Format-State $Diagnostics["HasPluginScripts"])) "Gray"
+    Log ("Plugins folder: {0}" -f (Format-State $Diagnostics["HasPluginsDir"])) "Gray"
+    Log ("preload_gm.rb: {0}" -f (Format-State $Diagnostics["HasPreloadFile"])) "Gray"
+    Log ("Game INI: {0}" -f (Format-State $Diagnostics["HasIni"])) "Gray"
+    if ($Diagnostics["HasIni"]) {
+        Log ("INI path: {0}" -f $Diagnostics["IniPath"]) "DarkGray"
+    }
     Log ("Enigma packed guess: {0}" -f (Format-State $Diagnostics["EnigmaPacked"])) $enigmaColor
     if ($Diagnostics["EnigmaPacked"]) {
         Log ("Enigma confidence: {0}" -f $Diagnostics["EnigmaConfidence"]) "Yellow"

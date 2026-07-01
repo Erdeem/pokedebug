@@ -91,13 +91,19 @@
         end
       end
       cancel_vehicles_if_possible
-      pbFadeOutIn(99999) {
-        $game_temp.player_new_map_id = map_id
-        $game_temp.player_new_x = x
-        $game_temp.player_new_y = y
-        $game_temp.player_new_direction = 2
-        $scene.transfer_player if $scene.respond_to?(:transfer_player)
-      }
+      warped = false
+      if defined?(pbFadeOutIn)
+        pbFadeOutIn(99999) {
+          warped = warp_player_to_map!(map_id, x, y, 2)
+        }
+      else
+        warped = warp_player_to_map!(map_id, x, y, 2)
+      end
+      if warped
+        Kernel.pbMessage(_INTL("Warped to map {1} at ({2}, {3}).", map_id, x, y))
+      else
+        Kernel.pbMessage(_INTL("Could not warp on this engine."))
+      end
     end
 
     def engine_switches
@@ -109,8 +115,13 @@
       return if !id || id <= 0
       current = $game_switches[id]
       ch = Kernel.pbMessage(_INTL("Switch {1} ({2}): {3}", id, hash[id], current ? "ON" : "OFF"), ["ON", "OFF", "Cancel"], -1)
-      $game_switches[id] = (ch == 0) if ch >= 0 && ch < 2
-      $game_map.need_refresh = true if $game_map
+      if ch >= 0 && ch < 2
+        if set_game_switch!(id, ch == 0)
+          Kernel.pbMessage(_INTL("Switch {1} set to {2}.", id, ch == 0 ? "ON" : "OFF"))
+        else
+          Kernel.pbMessage(_INTL("Could not edit that switch on this engine."))
+        end
+      end
     end
 
     def engine_variables
@@ -123,23 +134,42 @@
       current = $game_variables[id] || 0
       params = ChooseNumberParams.new
       params.setRange(-999999, 999999); params.setInitialValue(current)
-      $game_variables[id] = Kernel.pbMessageChooseNumber(_INTL("Var {1} ({2}) = {3}. New:", id, hash[id], current), params)
-      $game_map.need_refresh = true if $game_map
+      new_value = Kernel.pbMessageChooseNumber(_INTL("Var {1} ({2}) = {3}. New:", id, hash[id], current), params)
+      if set_game_variable!(id, new_value)
+        Kernel.pbMessage(_INTL("Variable {1} set to {2}.", id, new_value))
+      else
+        Kernel.pbMessage(_INTL("Could not edit that variable on this engine."))
+      end
     end
 
     def engine_safari
       menu = [
         { :label => "Edit Steps", :action => proc { 
           params = ChooseNumberParams.new; params.setRange(0, 9999); params.setInitialValue($PokemonGlobal.safariSteps || 0)
-          $PokemonGlobal.safariSteps = Kernel.pbMessageChooseNumber(_INTL("Steps:"), params) if $PokemonGlobal.respond_to?(:safariSteps=)
+          new_value = Kernel.pbMessageChooseNumber(_INTL("Steps:"), params)
+          if set_safari_value!(:safariSteps, :safariSteps, new_value)
+            Kernel.pbMessage(_INTL("Safari steps set to {1}.", new_value))
+          else
+            Kernel.pbMessage(_INTL("Safari steps not supported on this engine."))
+          end
         }},
         { :label => "Edit Safari Balls", :action => proc {
           params = ChooseNumberParams.new; params.setRange(0, 99); params.setInitialValue($PokemonGlobal.safariBalls || 0)
-          $PokemonGlobal.safariBalls = Kernel.pbMessageChooseNumber(_INTL("Safari Balls:"), params) if $PokemonGlobal.respond_to?(:safariBalls=)
+          new_value = Kernel.pbMessageChooseNumber(_INTL("Safari Balls:"), params)
+          if set_safari_value!(:safariBalls, :safariBalls, new_value)
+            Kernel.pbMessage(_INTL("Safari Balls set to {1}.", new_value))
+          else
+            Kernel.pbMessage(_INTL("Safari Balls not supported on this engine."))
+          end
         }},
         { :label => "Edit Contest Balls", :action => proc {
           params = ChooseNumberParams.new; params.setRange(0, 99); params.setInitialValue($PokemonGlobal.bugContestBalls || 0)
-          $PokemonGlobal.bugContestBalls = Kernel.pbMessageChooseNumber(_INTL("Contest Balls:"), params) if $PokemonGlobal.respond_to?(:bugContestBalls=)
+          new_value = Kernel.pbMessageChooseNumber(_INTL("Contest Balls:"), params)
+          if set_safari_value!(:bugContestBalls, :bugContestBalls, new_value)
+            Kernel.pbMessage(_INTL("Contest Balls set to {1}.", new_value))
+          else
+            Kernel.pbMessage(_INTL("Contest Balls not supported on this engine."))
+          end
         }}
       ]
       render_dynamic_menu("Edit Safari/Contest", menu)
@@ -149,16 +179,28 @@
       menu = [
         { :label => "Repel Steps", :action => proc {
           params = ChooseNumberParams.new; params.setRange(0, 99999); params.setInitialValue(get_repel_steps || 0)
-          set_repel_steps(Kernel.pbMessageChooseNumber(_INTL("Repel Steps:"), params))
+          new_value = Kernel.pbMessageChooseNumber(_INTL("Repel Steps:"), params)
+          set_repel_steps(new_value)
+          if get_repel_steps.to_i == new_value.to_i
+            Kernel.pbMessage(_INTL("Repel steps set to {1}.", new_value))
+          else
+            Kernel.pbMessage(_INTL("Could not change repel steps on this engine."))
+          end
         }},
         { :label => "Toggle flash", :action => proc {
-          $PokemonGlobal.flashUsed = !$PokemonGlobal.flashUsed if $PokemonGlobal.respond_to?(:flashUsed=)
-          Kernel.pbMessage(_INTL("Flash: {1}", on_off_text($PokemonGlobal.flashUsed)))
+          new_state = !flash_enabled?
+          if set_flash_enabled!(new_state)
+            Kernel.pbMessage(_INTL("Flash: {1}", on_off_text(flash_enabled?)))
+          else
+            Kernel.pbMessage(_INTL("Flash not supported on this version."))
+          end
         }},
         { :label => "Toggle Strength", :action => proc {
-          if $PokemonMap.respond_to?(:strengthUsed=)
-            $PokemonMap.strengthUsed = !$PokemonMap.strengthUsed
-            Kernel.pbMessage(_INTL("Strength: {1}", $PokemonMap.strengthUsed ? "ON" : "OFF"))
+          new_state = !strength_enabled?
+          if set_strength_enabled!(new_state)
+            Kernel.pbMessage(_INTL("Strength: {1}", on_off_text(strength_enabled?)))
+          else
+            Kernel.pbMessage(_INTL("Strength not supported on this version."))
           end
         }},
         { :label => "Toggle Black Flute", :action => proc {
@@ -182,14 +224,16 @@
     end
 
     def engine_refresh_map
-      $game_map.need_refresh = true
-      if $game_map.events
+      if defined?($game_map) && $game_map && $game_map.events
         $game_map.events.values.each do |e|
           e.refresh if e.respond_to?(:refresh)
         end
       end
-      safe_set_map_changed($game_map.map_id) if $game_map
-      Kernel.pbMessage(_INTL("Map refreshed and events re-evaluated!"))
+      if mark_map_for_refresh!
+        Kernel.pbMessage(_INTL("Map refreshed and events re-evaluated!"))
+      else
+        Kernel.pbMessage(_INTL("Could not refresh the map on this engine."))
+      end
     end
 
     def engine_map_events
@@ -241,12 +285,16 @@
 
       menu = [
         { :label => "Deposit Pokemon", :action => proc {
-          choose_pokemon_with_callback do |pkmn|
-            if day_care_deposit_first(pkmn, dc)
-              remove_party_member(pkmn)
-              Kernel.pbMessage(_INTL("Deposited {1}.", pkmn.name))
-            else
-              Kernel.pbMessage(_INTL("Day care data not found!"))
+          if day_care_first_pokemon(dc)
+            Kernel.pbMessage(_INTL("The first day care slot is already occupied. Withdraw it first."))
+          else
+            choose_pokemon_with_callback do |pkmn|
+              if day_care_deposit_first(pkmn, dc)
+                remove_party_member(pkmn)
+                Kernel.pbMessage(_INTL("Deposited {1}.", pkmn.name))
+              else
+                Kernel.pbMessage(_INTL("Could not deposit this Pokemon on this engine."))
+              end
             end
           end
         }},
@@ -254,14 +302,18 @@
           if day_care_force_egg(dc)
             Kernel.pbMessage(_INTL("Day care egg forced successfully."))
           else
-            Kernel.pbMessage(_INTL("Day care data not found!"))
+            Kernel.pbMessage(_INTL("Could not force a day care egg on this engine."))
           end
         }},
         { :label => "Withdraw First Deposited", :action => proc {
           pkmn = day_care_withdraw_first(dc)
           if pkmn
-            add_pkmn_silently(pkmn)
-            Kernel.pbMessage(_INTL("Withdrew {1}.", pkmn.name))
+            if add_pkmn_silently(pkmn)
+              Kernel.pbMessage(_INTL("Withdrew {1}.", pkmn.name))
+            else
+              day_care_deposit_first(pkmn, dc)
+              Kernel.pbMessage(_INTL("Could not withdraw because the party is full or unsupported on this engine."))
+            end
           else
             Kernel.pbMessage(_INTL("No Pokemon in first slot."))
           end
@@ -299,12 +351,13 @@
       
       pkmn = create_pkmn(sp_sym, level)
       return Kernel.pbMessage(_INTL("Could not create Pokemon for this engine.")) unless pkmn
-      pkmn.form = form if pkmn.respond_to?(:form=) && form > 0
+      if form > 0 && !set_pokemon_form!(pkmn, form)
+        Kernel.pbMessage(_INTL("Could not set the selected form on this engine."))
+      end
       recalc_pokemon_stats(pkmn) if pkmn
       
       if Kernel.pbMessage("Make Shiny?", ["Yes", "No"], -1) == 0
-        pkmn.shiny = true if pkmn.respond_to?(:shiny=)
-        pkmn.makeShiny if pkmn.respond_to?(:makeShiny)
+        Kernel.pbMessage(_INTL("Could not make this test Pokemon shiny on this engine.")) unless set_pokemon_shiny!(pkmn, true)
       end
       
       if Kernel.pbMessage("Custom Moveset?", ["Yes", "No"], -1) == 0
@@ -315,7 +368,9 @@
           mid = search_list("Moves", mhash)
           if mid
             msym = get_symbol(:Move, mid)
-            assign_move!(pkmn, i, msym)
+            unless assign_move!(pkmn, i, msym)
+              Kernel.pbMessage(_INTL("Could not assign move to slot {1} on this engine.", i + 1))
+            end
           end
         end
       end
@@ -351,21 +406,10 @@
     end
 
     def engine_exp_all
-      if $PokemonGlobal.respond_to?(:exp_all)
-        $PokemonGlobal.exp_all = !$PokemonGlobal.exp_all
-        Kernel.pbMessage(_INTL("Global Exp All flag: {1}", $PokemonGlobal.exp_all ? "ON" : "OFF"))
-        return
-      end
-      
-      has_item = bag_has_item?(:EXPALL)
-      if has_item
-        bag_delete_item(:EXPALL)
+      was_enabled = exp_all_enabled?
+      if set_exp_all_enabled!(!was_enabled)
+        Kernel.pbMessage(_INTL("Exp All: {1}", exp_all_status_label))
       else
-        stored = bag_store_item(:EXPALL)
-        unless stored
-          expall_id = build_search_hash(:Item).key("EXPALL")
-          bag_store_item(get_symbol(:Item, expall_id)) if expall_id
-        end
+        Kernel.pbMessage(_INTL("Could not toggle Exp All on this engine."))
       end
-      Kernel.pbMessage(_INTL("Exp All Item: {1}", has_item ? "REMOVED" : "ADDED"))
     end

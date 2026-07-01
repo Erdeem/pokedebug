@@ -248,6 +248,45 @@ module DeveloperMenu
       false
     end
 
+    def set_global_toggle(value, *names)
+      return false unless defined?($PokemonGlobal) && $PokemonGlobal
+      names.each do |name|
+        writer = "#{name}="
+        next unless $PokemonGlobal.respond_to?(writer)
+        $PokemonGlobal.send(writer, value)
+        return true
+      end
+      false
+    rescue => e
+      log_error("Set Global Toggle", e)
+      false
+    end
+
+    def get_global_value(*names)
+      return nil unless defined?($PokemonGlobal) && $PokemonGlobal
+      names.each do |name|
+        return $PokemonGlobal.send(name) if $PokemonGlobal.respond_to?(name)
+      end
+      nil
+    rescue => e
+      log_error("Get Global Value", e)
+      nil
+    end
+
+    def set_global_value(value, *names)
+      return false unless defined?($PokemonGlobal) && $PokemonGlobal
+      names.each do |name|
+        writer = "#{name}="
+        next unless $PokemonGlobal.respond_to?(writer)
+        $PokemonGlobal.send(writer, value)
+        return true
+      end
+      false
+    rescue => e
+      log_error("Set Global Value", e)
+      false
+    end
+
     def module_has_method?(owner, method_name)
       return false unless owner
       method_text = method_name.to_s
@@ -394,6 +433,131 @@ module DeveloperMenu
       0
     rescue
       0
+    end
+
+    def player_coin_value
+      p = get_player
+      return p.coins if p && p.respond_to?(:coins)
+      return p.coin if p && p.respond_to?(:coin)
+      0
+    rescue
+      0
+    end
+
+    def player_battle_points_value
+      p = get_player
+      return p.battle_points if p && p.respond_to?(:battle_points)
+      return p.battlePoints if p && p.respond_to?(:battlePoints)
+      return p.bp if p && p.respond_to?(:bp)
+      0
+    rescue
+      0
+    end
+
+    def player_trainer_id_value
+      p = get_player
+      return p.id if p && p.respond_to?(:id)
+      return p.trainerID if p && p.respond_to?(:trainerID)
+      return p.publicID if p && p.respond_to?(:publicID)
+      0
+    rescue
+      0
+    end
+
+    def set_player_money!(value)
+      p = get_player
+      return false unless p
+      new_value = [value.to_i, 0].max
+      if p.respond_to?(:money=)
+        p.money = new_value
+        return p.money.to_i == new_value if p.respond_to?(:money)
+        return true
+      end
+      false
+    rescue => e
+      log_error("Set Player Money", e)
+      false
+    end
+
+    def set_player_coins!(value)
+      p = get_player
+      return false unless p
+      new_value = [value.to_i, 0].max
+      if p.respond_to?(:coins=)
+        p.coins = new_value
+        return p.coins.to_i == new_value if p.respond_to?(:coins)
+        return true
+      end
+      if p.respond_to?(:coin=)
+        p.coin = new_value
+        return p.coin.to_i == new_value if p.respond_to?(:coin)
+        return true
+      end
+      false
+    rescue => e
+      log_error("Set Player Coins", e)
+      false
+    end
+
+    def set_player_battle_points!(value)
+      p = get_player
+      return false unless p
+      new_value = [value.to_i, 0].max
+      if p.respond_to?(:battle_points=)
+        p.battle_points = new_value
+        return p.battle_points.to_i == new_value if p.respond_to?(:battle_points)
+        return true
+      end
+      if p.respond_to?(:battlePoints=)
+        p.battlePoints = new_value
+        return p.battlePoints.to_i == new_value if p.respond_to?(:battlePoints)
+        return true
+      end
+      if p.respond_to?(:bp=)
+        p.bp = new_value
+        return p.bp.to_i == new_value if p.respond_to?(:bp)
+        return true
+      end
+      false
+    rescue => e
+      log_error("Set Player Battle Points", e)
+      false
+    end
+
+    def set_player_name!(name)
+      p = get_player
+      return false unless p
+      final_name = name.to_s.strip
+      return false if final_name == ""
+      if p.respond_to?(:name=)
+        p.name = final_name
+        return p.name.to_s == final_name if p.respond_to?(:name)
+        return true
+      end
+      false
+    rescue => e
+      log_error("Set Player Name", e)
+      false
+    end
+
+    def set_player_trainer_id!(value)
+      p = get_player
+      return false unless p
+      new_value = [value.to_i, 0].max
+      if p.respond_to?(:id=)
+        p.id = new_value
+        return p.id.to_i == new_value if p.respond_to?(:id)
+        return true
+      end
+      if p.respond_to?(:trainerID=)
+        p.trainerID = new_value
+        return p.trainerID.to_i == new_value if p.respond_to?(:trainerID)
+        return true
+      end
+      false
+    rescue => e
+      log_error("Set Player Trainer ID", e)
+      false
     end
 
     def player_badge_count
@@ -584,6 +748,7 @@ module DeveloperMenu
     end
 
     def engine_capabilities
+      save_layout = detect_save_layout
       {
         :debug_menu => debug_menu_available?,
         :day_care => !get_day_care_data.nil?,
@@ -595,7 +760,9 @@ module DeveloperMenu
         :battle_legacy => cached_engine_profile[:has_legacy_battle_api],
         :player_name_ui => defined?(pbEnterPlayerName) ? true : false,
         :pokemon_name_ui => defined?(pbEnterPokemonName) ? true : false,
-        :presets => true
+        :presets => true,
+        :save_appdata => save_layout[:appdata_available],
+        :save_candidates => save_layout[:save_dir_candidates]
       }
     rescue => e
       log_error("Engine Capabilities", e)
@@ -700,9 +867,11 @@ module DeveloperMenu
     def day_care_deposit_first(pkmn, dc = nil)
       slot = day_care_first_slot(dc)
       return false unless slot
+      current = day_care_first_pokemon(dc)
+      return false if current
       slot.pokemon = pkmn if slot.respond_to?(:pokemon=)
       slot.level = pkmn.level if slot.respond_to?(:level=) && pkmn.respond_to?(:level)
-      true
+      day_care_first_pokemon(dc) == pkmn || !day_care_first_pokemon(dc).nil?
     rescue => e
       log_error("Day Care Deposit", e)
       false
@@ -724,9 +893,93 @@ module DeveloperMenu
       return false unless dc
       dc.step_count = 255 if dc.respond_to?(:step_count=)
       dc.egg_generated = true if dc.respond_to?(:egg_generated=)
+      return !!dc.egg_generated if dc.respond_to?(:egg_generated)
       true
     rescue => e
       log_error("Day Care Force Egg", e)
+      false
+    end
+
+    def set_running_shoes_enabled!(value)
+      set_global_toggle(!!value, :runningShoes, :running_shoes)
+    end
+
+    def running_shoes_enabled?
+      current = get_global_value(:runningShoes, :running_shoes)
+      !!current
+    end
+
+    def set_pokedex_enabled!(value)
+      enabled = !!value
+      changed = false
+      p = get_player
+      if p && p.respond_to?(:pokedex=)
+        p.pokedex = enabled
+        changed = true
+      end
+      changed = true if set_global_toggle(enabled, :pokedexUnlocked, :pokedex_unlocked)
+      return enabled if changed
+      false
+    rescue => e
+      log_error("Set Pokedex Enabled", e)
+      false
+    end
+
+    def pokedex_enabled?
+      p = get_player
+      return !!p.pokedex if p && p.respond_to?(:pokedex)
+      current = get_global_value(:pokedexUnlocked, :pokedex_unlocked)
+      !!current
+    rescue => e
+      log_error("Pokedex Enabled", e)
+      false
+    end
+
+    def set_pokegear_enabled!(value)
+      p = get_player
+      return false unless p
+      enabled = !!value
+      if p.respond_to?(:pokegear=)
+        p.pokegear = enabled
+        return !!p.pokegear == enabled if p.respond_to?(:pokegear)
+        return true
+      end
+      false
+    rescue => e
+      log_error("Set Pokegear Enabled", e)
+      false
+    end
+
+    def pokegear_enabled?
+      p = get_player
+      return !!p.pokegear if p && p.respond_to?(:pokegear)
+      false
+    rescue => e
+      log_error("Pokegear Enabled", e)
+      false
+    end
+
+    def set_play_time_hours!(hours)
+      return false unless defined?(Graphics) && Graphics.respond_to?(:frame_count=)
+      total_hours = [hours.to_i, 0].max
+      Graphics.frame_count = total_hours * 60 * 60 * frame_rate_value
+      true
+    rescue => e
+      log_error("Set Play Time", e)
+      false
+    end
+
+    def set_region_value!(value)
+      set_global_value(value.to_i, :region)
+    end
+
+    def clear_partner_data!
+      return false unless defined?($PokemonGlobal) && $PokemonGlobal && $PokemonGlobal.respond_to?(:partner)
+      return :empty if $PokemonGlobal.partner.nil?
+      $PokemonGlobal.partner = nil if $PokemonGlobal.respond_to?(:partner=)
+      $PokemonGlobal.partner.nil?
+    rescue => e
+      log_error("Clear Partner", e)
       false
     end
 
@@ -838,14 +1091,127 @@ module DeveloperMenu
       false
     end
 
+    def mark_map_for_refresh!
+      changed = false
+      if defined?($game_map) && $game_map
+        if $game_map.respond_to?(:need_refresh=)
+          $game_map.need_refresh = true
+          changed = true
+        elsif $game_map.respond_to?(:refresh)
+          $game_map.refresh
+          changed = true
+        end
+      end
+      if defined?($MapFactory) && $MapFactory && defined?($game_map) && $game_map && $game_map.respond_to?(:map_id)
+        changed = true if safe_set_map_changed($game_map.map_id)
+      end
+      changed
+    rescue => e
+      log_error("Mark Map For Refresh", e)
+      false
+    end
+
+    def set_game_switch!(id, value)
+      return false unless defined?($game_switches) && $game_switches && id.to_i >= 0
+      $game_switches[id] = !!value
+      mark_map_for_refresh!
+      return !!$game_switches[id] == !!value
+    rescue => e
+      log_error("Set Game Switch", e)
+      false
+    end
+
+    def set_game_variable!(id, value)
+      return false unless defined?($game_variables) && $game_variables && id.to_i >= 0
+      $game_variables[id] = value
+      mark_map_for_refresh!
+      return $game_variables[id] == value
+    rescue => e
+      log_error("Set Game Variable", e)
+      false
+    end
+
+    def set_safari_value!(writer_name, reader_name, value)
+      return false unless defined?($PokemonGlobal) && $PokemonGlobal
+      writer = "#{writer_name}="
+      return false unless $PokemonGlobal.respond_to?(writer)
+      $PokemonGlobal.send(writer, value)
+      return $PokemonGlobal.send(reader_name) == value if $PokemonGlobal.respond_to?(reader_name)
+      true
+    rescue => e
+      log_error("Set Safari Value", e)
+      false
+    end
+
+    def set_flash_enabled!(value)
+      set_global_toggle(!!value, :flashUsed, :flash_used)
+    end
+
+    def flash_enabled?
+      !!get_global_value(:flashUsed, :flash_used)
+    end
+
+    def set_strength_enabled!(value)
+      set_map_toggle(!!value, :strengthUsed, :strength_used)
+    end
+
+    def strength_enabled?
+      !!get_map_toggle(:strengthUsed, :strength_used)
+    end
+
+    def warp_player_to_map!(map_id, x, y, direction = 2)
+      return false unless defined?($game_temp) && $game_temp
+      if $game_temp.respond_to?(:player_new_map_id=)
+        $game_temp.player_new_map_id = map_id
+        $game_temp.player_new_x = x if $game_temp.respond_to?(:player_new_x=)
+        $game_temp.player_new_y = y if $game_temp.respond_to?(:player_new_y=)
+        $game_temp.player_new_direction = direction if $game_temp.respond_to?(:player_new_direction=)
+        if defined?($scene) && $scene && $scene.respond_to?(:transfer_player)
+          $scene.transfer_player
+          return true
+        end
+      end
+      if defined?($game_player) && $game_player
+        $game_player.moveto(x, y) if $game_player.respond_to?(:moveto)
+        $game_player.center(x, y) if $game_player.respond_to?(:center)
+        return true
+      end
+      false
+    rescue => e
+      log_error("Warp Player", e)
+      false
+    end
+
     def open_native_debug_menu
       if cached_engine_profile[:has_legacy_debug_menu]
         pbDebugMenu
         return true
       end
 
+      if defined?(pbDebugMenuCommands)
+        pbDebugMenuCommands
+        return true
+      end
+
+      if defined?(pbDebugMenu)
+        pbDebugMenu
+        return true
+      end
+
       if cached_engine_profile[:has_modern_debug_menu] && DebugMenu.respond_to?(:new)
         DebugMenu.new.pbStartScreen
+        return true
+      end
+
+      if defined?(DebugMenu) && DebugMenu.respond_to?(:pbStartScreen)
+        DebugMenu.pbStartScreen
+        return true
+      end
+
+      if defined?(PokemonDebugMenu_Scene) && defined?(PokemonDebugMenuScreen)
+        scene = PokemonDebugMenu_Scene.new
+        screen = PokemonDebugMenuScreen.new(scene)
+        screen.pbStartScreen
         return true
       end
 
@@ -928,6 +1294,9 @@ module DeveloperMenu
     def open_pc_menu
       return pbPokeCenterPC if defined?(pbPokeCenterPC)
       return pbPC if defined?(pbPC)
+      return pbTrainerPC if defined?(pbTrainerPC)
+      return PokemonPCList.start if defined?(PokemonPCList) && PokemonPCList.respond_to?(:start)
+      return PokemonPCList.new.start if defined?(PokemonPCList) && PokemonPCList.respond_to?(:new)
       Kernel.pbMessage(_INTL("PC not supported on this version."))
     rescue => e
       log_error("Open PC", e)
@@ -996,8 +1365,9 @@ module DeveloperMenu
         choice_index = Kernel.pbMessage(_INTL("Choose ability:"), cmds, -1)
       end
       return false if choice_index.nil? || choice_index < 0 || choice_index >= abils.length
-      pkmn.ability_index = abils[choice_index][1] if pkmn.respond_to?(:ability_index=)
-      true
+      ability_symbol = abils[choice_index][0]
+      ability_index = abils[choice_index][1]
+      set_pokemon_ability!(pkmn, ability_symbol, ability_index)
     rescue => e
       log_error("Set Legal Ability", e)
       false
@@ -1085,6 +1455,7 @@ module DeveloperMenu
       return false unless pkmn
       pkmn.nature = nature_symbol if pkmn.respond_to?(:nature=)
       pkmn.setNature(nature_symbol) if pkmn.respond_to?(:setNature)
+      return pkmn.nature.to_s == nature_symbol.to_s if pkmn.respond_to?(:nature)
       true
     rescue => e
       log_error("Set Nature", e)
@@ -1095,6 +1466,7 @@ module DeveloperMenu
       return false unless pkmn
       pkmn.item = item_symbol if pkmn.respond_to?(:item=)
       pkmn.setItem(item_symbol) if pkmn.respond_to?(:setItem)
+      return pkmn.item == item_symbol if pkmn.respond_to?(:item)
       true
     rescue => e
       log_error("Set Held Item", e)
@@ -1403,7 +1775,7 @@ module DeveloperMenu
       else
         pkmn.shiny = false if pkmn.respond_to?(:shiny=)
       end
-      true
+      return pokemon_shiny_state(pkmn) == !!shiny
     rescue => e
       log_error("Set Shiny", e)
       false
@@ -1412,7 +1784,9 @@ module DeveloperMenu
     def set_pokemon_species!(pkmn, species_symbol)
       return false unless pkmn
       pkmn.species = species_symbol if pkmn.respond_to?(:species=)
+      pkmn.setSpecies(species_symbol) if pkmn.respond_to?(:setSpecies)
       recalc_pokemon_stats(pkmn)
+      return pkmn.species == species_symbol if pkmn.respond_to?(:species)
       true
     rescue => e
       log_error("Set Species", e)
@@ -1422,7 +1796,9 @@ module DeveloperMenu
     def set_pokemon_form!(pkmn, form)
       return false unless pkmn
       pkmn.form = form if pkmn.respond_to?(:form=)
+      pkmn.setForm(form) if pkmn.respond_to?(:setForm)
       recalc_pokemon_stats(pkmn)
+      return pkmn.form.to_i == form.to_i if pkmn.respond_to?(:form)
       true
     rescue => e
       log_error("Set Form", e)
@@ -1432,6 +1808,7 @@ module DeveloperMenu
     def clear_pokemon_form_override!(pkmn)
       return false unless pkmn
       pkmn.forced_form = nil if pkmn.respond_to?(:forced_form=)
+      pkmn.form_simple = nil if pkmn.respond_to?(:form_simple=)
       true
     rescue => e
       log_error("Clear Form Override", e)
@@ -1441,6 +1818,9 @@ module DeveloperMenu
     def set_pokemon_ball!(pkmn, item_id)
       return false unless pkmn
       set_ball_data!(pkmn, item_id)
+      return pkmn.poke_ball == get_symbol(:Item, item_id) if pkmn.respond_to?(:poke_ball) && item_id
+      return pkmn.ballused.to_i == item_id.to_i if pkmn.respond_to?(:ballused) && item_id
+      return pkmn.ball_used == get_symbol(:Item, item_id) if pkmn.respond_to?(:ball_used) && item_id
       true
     rescue => e
       log_error("Set Poke Ball", e)
@@ -1451,6 +1831,7 @@ module DeveloperMenu
       return false unless pkmn
       return false unless pkmn.respond_to?(:giveRibbon)
       pkmn.giveRibbon(ribbon_symbol)
+      return pkmn.hasRibbon?(ribbon_symbol) if pkmn.respond_to?(:hasRibbon?)
       true
     rescue => e
       log_error("Add Ribbon", e)
@@ -1476,6 +1857,8 @@ module DeveloperMenu
       pkmn.name = "Egg" if pkmn.respond_to?(:name=)
       pkmn.egg_steps = 255 if pkmn.respond_to?(:egg_steps=)
       recalc_pokemon_stats(pkmn)
+      return pokemon_egg_state(pkmn) if pkmn.respond_to?(:egg?) || pkmn.respond_to?(:isEgg?)
+      return pkmn.egg_steps.to_i == 255 if pkmn.respond_to?(:egg_steps)
       true
     rescue => e
       log_error("Make Egg", e)
@@ -1695,6 +2078,120 @@ module DeveloperMenu
     rescue => e
       log_error("Teach Move With Prompt", e)
       false
+    end
+
+    def reset_pokemon_moves!(pkmn)
+      return false unless pkmn
+      if pkmn.respond_to?(:resetMoves)
+        pkmn.resetMoves
+      elsif pkmn.respond_to?(:reset_moves)
+        pkmn.reset_moves
+      elsif pkmn.respond_to?(:pbLearnMove) && pkmn.respond_to?(:species) && pkmn.respond_to?(:level)
+        moved = false
+        level_up_moves_for(pkmn).each do |entry|
+          next unless entry[0].to_i <= pkmn.level.to_i
+          moved ||= !!assign_next_free_move!(pkmn, entry[1])
+        end
+        return moved
+      else
+        return false
+      end
+      true
+    rescue => e
+      log_error("Reset Pokemon Moves", e)
+      false
+    end
+
+    def record_pokemon_initial_moves!(pkmn)
+      return false unless pkmn && pkmn.respond_to?(:moves)
+      move_ids = pkmn.moves.compact.map { |move| move_identifier(move) }.compact
+      return false if move_ids.empty?
+      if pkmn.respond_to?(:first_moves=)
+        pkmn.first_moves = move_ids
+        return true
+      end
+      if pkmn.respond_to?(:initial_moves=)
+        pkmn.initial_moves = move_ids
+        return true
+      end
+      pkmn.instance_variable_set(:@first_moves, move_ids)
+      true
+    rescue => e
+      log_error("Record Initial Moves", e)
+      false
+    end
+
+    def restore_pokemon_pp!(pkmn)
+      changed = false
+      each_move_slot(pkmn) do |move, _index|
+        next unless move
+        total_pp = move.respond_to?(:total_pp) ? move.total_pp : (move.respond_to?(:totalPP) ? move.totalPP : nil)
+        next if total_pp.nil?
+        if move.respond_to?(:pp=)
+          move.pp = total_pp
+          changed = true
+        end
+      end
+      changed
+    rescue => e
+      log_error("Restore Pokemon PP", e)
+      false
+    end
+
+    def max_pokemon_ppups!(pkmn, value = 3)
+      changed = false
+      each_move_slot(pkmn) do |move, _index|
+        next unless move
+        if move.respond_to?(:ppup=)
+          move.ppup = value
+          changed = true
+        elsif move.respond_to?(:ppup)
+          move.ppup = value rescue nil
+          changed = true
+        end
+      end
+      restore_pokemon_pp!(pkmn) if changed
+      changed
+    rescue => e
+      log_error("Max Pokemon PP Ups", e)
+      false
+    end
+
+    def forget_move!(pkmn, move_index)
+      return false unless pkmn && pkmn.respond_to?(:moves) && pkmn.moves
+      return false if move_index.nil? || move_index < 0 || move_index >= pkmn.moves.length
+      if pkmn.moves.respond_to?(:delete_at)
+        !!pkmn.moves.delete_at(move_index)
+      else
+        pkmn.moves[move_index] = nil
+        true
+      end
+    rescue => e
+      log_error("Forget Move", e)
+      false
+    end
+
+    def assign_next_free_move!(pkmn, move_id)
+      return false unless pkmn && pkmn.respond_to?(:moves) && pkmn.moves
+      free_index = pkmn.moves.index(nil)
+      free_index = pkmn.moves.length if free_index.nil? && pkmn.moves.length < 4
+      return false if free_index.nil?
+      assign_move!(pkmn, free_index, move_id)
+    rescue => e
+      log_error("Assign Next Free Move", e)
+      false
+    end
+
+    def level_up_moves_for(pkmn)
+      return [] unless pkmn
+      species = pkmn.respond_to?(:species) ? pkmn.species : nil
+      record = data_record(:Species, species)
+      return record.moves if record && record.respond_to?(:moves) && record.moves
+      return pkmn.getMoveList if pkmn.respond_to?(:getMoveList)
+      []
+    rescue => e
+      log_error("Level Up Moves", e)
+      []
     end
 
     def stat_editor_definitions
@@ -1926,19 +2423,50 @@ module DeveloperMenu
 
     def bag_has_item?(item)
       return false unless defined?($PokemonBag) && $PokemonBag
-      return $PokemonBag.pbHasItem?(item) if $PokemonBag.respond_to?(:pbHasItem?)
+      item_storage_candidates(item).each do |candidate|
+        return true if $PokemonBag.respond_to?(:pbHasItem?) && $PokemonBag.pbHasItem?(candidate)
+        return true if $PokemonBag.respond_to?(:hasItem?) && $PokemonBag.hasItem?(candidate)
+        return true if $PokemonBag.respond_to?(:contains?) && $PokemonBag.contains?(candidate)
+      end
       false
     rescue => e
       log_error("Bag Has Item", e)
       false
     end
 
+    def item_storage_candidates(item)
+      candidates = []
+      candidates << item unless item.nil?
+      candidates << item.to_sym if item.respond_to?(:to_sym)
+      candidates << item.to_s if item.respond_to?(:to_s)
+
+      if item.is_a?(Symbol)
+        pb_items = safe_const_get(Object, :PBItems)
+        if pb_items && pb_items.const_defined?(item)
+          candidates << pb_items.const_get(item)
+        end
+      elsif item.is_a?(String)
+        symbol_name = item.to_sym rescue nil
+        pb_items = safe_const_get(Object, :PBItems)
+        if symbol_name && pb_items && pb_items.const_defined?(symbol_name)
+          candidates << pb_items.const_get(symbol_name)
+        end
+      end
+
+      candidates.compact.uniq
+    rescue => e
+      log_error("Item Storage Candidates", e)
+      [item].compact
+    end
+
     def bag_store_item(item, qty = 1)
       return false unless defined?($PokemonBag) && $PokemonBag
-      return $PokemonBag.pbStoreItem(item, qty) if $PokemonBag.respond_to?(:pbStoreItem)
-      return $PokemonBag.pbStoreItem(item) if $PokemonBag.respond_to?(:pbStoreItem)
-      return $PokemonBag.storeItem(item, qty) if $PokemonBag.respond_to?(:storeItem)
-      return $PokemonBag.add(item, qty) if $PokemonBag.respond_to?(:add)
+      item_storage_candidates(item).each do |candidate|
+        return true if $PokemonBag.respond_to?(:pbStoreItem) && $PokemonBag.pbStoreItem(candidate, qty)
+        return true if $PokemonBag.respond_to?(:pbStoreItem) && $PokemonBag.pbStoreItem(candidate)
+        return true if $PokemonBag.respond_to?(:storeItem) && $PokemonBag.storeItem(candidate, qty)
+        return true if $PokemonBag.respond_to?(:add) && $PokemonBag.add(candidate, qty)
+      end
       false
     rescue => e
       log_error("Bag Store Item", e)
@@ -1947,26 +2475,129 @@ module DeveloperMenu
 
     def bag_delete_item(item, qty = 1)
       return false unless defined?($PokemonBag) && $PokemonBag
-      return $PokemonBag.pbDeleteItem(item, qty) if $PokemonBag.respond_to?(:pbDeleteItem)
-      return $PokemonBag.pbDeleteItem(item) if $PokemonBag.respond_to?(:pbDeleteItem)
-      return $PokemonBag.deleteItem(item, qty) if $PokemonBag.respond_to?(:deleteItem)
-      return $PokemonBag.remove(item, qty) if $PokemonBag.respond_to?(:remove)
+      item_storage_candidates(item).each do |candidate|
+        return true if $PokemonBag.respond_to?(:pbDeleteItem) && $PokemonBag.pbDeleteItem(candidate, qty)
+        return true if $PokemonBag.respond_to?(:pbDeleteItem) && $PokemonBag.pbDeleteItem(candidate)
+        return true if $PokemonBag.respond_to?(:deleteItem) && $PokemonBag.deleteItem(candidate, qty)
+        return true if $PokemonBag.respond_to?(:remove) && $PokemonBag.remove(candidate, qty)
+      end
       false
     rescue => e
       log_error("Bag Delete Item", e)
       false
     end
 
+    def normalized_item_key(text)
+      text.to_s.upcase.gsub(/[^A-Z0-9]/, "")
+    rescue
+      ""
+    end
+
+    def exp_all_item_aliases
+      [
+        "EXPALL",
+        "EXPSHAREALL",
+        "EXPSHARE_ALL",
+        "EXPALLITEM",
+        "EXPAL"
+      ]
+    end
+
+    def exp_all_item_candidates
+      aliases = exp_all_item_aliases.map { |name| normalized_item_key(name) }
+      candidates = []
+      exp_all_item_aliases.each { |name| candidates.concat(item_storage_candidates(name)) }
+
+      begin
+        build_search_hash(:Item).each do |item_id, item_name|
+          normalized_name = normalized_item_key(item_name)
+          next unless aliases.include?(normalized_name) || normalized_name.include?("EXPSHAREALL") || normalized_name.include?("EXPALL")
+          symbol = get_symbol(:Item, item_id)
+          candidates.concat(item_storage_candidates(symbol || item_id))
+        end
+      rescue => e
+        log_error("Exp All Search Candidates", e)
+      end
+
+      candidates.compact.uniq
+    rescue => e
+      log_error("Exp All Item Candidates", e)
+      exp_all_item_aliases
+    end
+
+    def exp_all_global_flag_names
+      [:exp_all, :expAll, :experience_all, :experienceAll]
+    end
+
+    def exp_all_enabled?
+      exp_all_global_flag_names.each do |reader|
+        current = get_global_value(reader)
+        return !!current unless current.nil?
+      end
+      exp_all_item_candidates.any? { |candidate| bag_has_item?(candidate) }
+    rescue => e
+      log_error("Exp All Enabled", e)
+      false
+    end
+
+    def set_exp_all_enabled!(enabled)
+      target = !!enabled
+      changed = false
+
+      exp_all_global_flag_names.each do |reader|
+        changed = true if set_global_toggle(target, reader)
+      end
+
+      if target
+        stored = false
+        exp_all_item_candidates.each do |candidate|
+          if bag_store_item(candidate, 1)
+            stored = true
+            changed = true
+            break
+          end
+        end
+        changed ||= stored
+      else
+        removed = false
+        exp_all_item_candidates.each do |candidate|
+          removed = true if bag_delete_item(candidate, 999)
+        end
+        changed ||= removed
+      end
+
+      return exp_all_enabled? == target if changed
+      false
+    rescue => e
+      log_error("Set Exp All", e)
+      false
+    end
+
+    def exp_all_status_label
+      active_items = exp_all_item_candidates.select { |candidate| bag_has_item?(candidate) }
+      if active_items.empty?
+        exp_all_enabled? ? "ON" : "OFF"
+      else
+        "ON (#{active_items.first})"
+      end
+    rescue => e
+      log_error("Exp All Status Label", e)
+      exp_all_enabled? ? "ON" : "OFF"
+    end
+
     def start_test_battle(pkmn, species_symbol, level)
+      result = nil
       if cached_engine_profile[:has_modern_battle_api]
         begin
-          return WildBattle.start(pkmn, level)
+          result = WildBattle.start(pkmn, level)
+          return result unless result.nil?
         rescue => e
           log_error("WildBattle.start object", e)
         end
 
         begin
-          return WildBattle.start(species_symbol, level)
+          result = WildBattle.start(species_symbol, level)
+          return result unless result.nil?
         rescue => e
           log_error("WildBattle.start species", e)
         end
@@ -1974,9 +2605,33 @@ module DeveloperMenu
 
       if cached_engine_profile[:has_legacy_battle_api]
         begin
-          return pbWildBattle(species_symbol, level)
+          result = pbWildBattle(species_symbol, level)
+          return result unless result.nil?
         rescue => e
           log_error("pbWildBattle", e)
+        end
+
+        if pkmn
+          begin
+            result = pbWildBattle(pkmn)
+            return result unless result.nil?
+          rescue => e
+            log_error("pbWildBattle object", e)
+          end
+
+          begin
+            result = pbSingleOrDoubleWildBattle(pkmn)
+            return result unless result.nil?
+          rescue => e
+            log_error("pbSingleOrDoubleWildBattle object", e)
+          end
+        end
+
+        begin
+          result = pbSingleOrDoubleWildBattle(species_symbol, level)
+          return result unless result.nil?
+        rescue => e
+          log_error("pbSingleOrDoubleWildBattle", e)
         end
       end
 
@@ -2084,10 +2739,36 @@ module DeveloperMenu
       nil
     end
 
+    def preset_move_ids_valid?(move_ids)
+      return true if move_ids.nil?
+      return false unless move_ids.is_a?(Array)
+      move_ids.all? do |move_id|
+        next false if move_id.nil?
+        !data_record(:Move, move_id).nil? || !get_symbol(:Move, move_id).nil?
+      end
+    rescue => e
+      log_error("Preset Move Validation", e)
+      false
+    end
+
+    def validate_pokemon_preset(preset)
+      return false unless preset.is_a?(Hash)
+      return false unless preset.key?(:species)
+      return false if preset[:species].nil?
+      return false if preset.key?(:level) && preset[:level].to_i <= 0
+      return false if preset.key?(:form) && preset[:form].to_i < 0
+      return false if preset.key?(:gender) && ![0, 1, 2, nil].include?(preset[:gender])
+      return false unless preset_move_ids_valid?(preset[:moves])
+      true
+    rescue => e
+      log_error("Validate Pokemon Preset", e)
+      false
+    end
+
     def export_pokemon_preset(pkmn, path = nil)
       path ||= preset_file_path
       preset = extract_pokemon_preset(pkmn)
-      return false unless preset
+      return false unless preset && validate_pokemon_preset(preset)
       File.open(path, "wb") { |f| Marshal.dump(preset, f) }
       true
     rescue => e
@@ -2098,15 +2779,17 @@ module DeveloperMenu
     def import_pokemon_preset(path = nil)
       path ||= preset_file_path
       return nil unless File.exist?(path)
-      File.open(path, "rb") { |f| Marshal.load(f) }
+      preset = File.open(path, "rb") { |f| Marshal.load(f) }
+      return preset if validate_pokemon_preset(preset)
+      nil
     rescue => e
       log_error("Import Pokemon Preset", e)
       nil
     end
 
     def apply_pokemon_preset!(pkmn, preset)
-      return false unless pkmn && preset.is_a?(Hash)
-      set_pokemon_species!(pkmn, preset[:species]) if preset.key?(:species)
+      return false unless pkmn && validate_pokemon_preset(preset)
+      return false if preset.key?(:species) && !set_pokemon_species!(pkmn, preset[:species])
       set_pokemon_level!(pkmn, preset[:level]) if preset.key?(:level)
       set_pokemon_form!(pkmn, preset[:form]) if preset.key?(:form)
       set_pokemon_nickname!(pkmn, preset[:nickname]) if preset[:nickname] && preset[:nickname] != ""
@@ -2127,7 +2810,7 @@ module DeveloperMenu
       if preset[:moves].is_a?(Array) && !preset[:moves].empty?
         clear_moves!(pkmn)
         preset[:moves].first(4).each_with_index do |move_id, index|
-          assign_move!(pkmn, index, move_id)
+          return false unless assign_move!(pkmn, index, move_id)
         end
       end
       recalc_pokemon_stats(pkmn)
@@ -2138,14 +2821,31 @@ module DeveloperMenu
     end
 
     def create_pokemon_from_preset(preset)
-      return nil unless preset.is_a?(Hash) && preset[:species]
+      return nil unless validate_pokemon_preset(preset)
       pkmn = create_pkmn(preset[:species], preset[:level] || 1)
       return nil unless pkmn
-      apply_pokemon_preset!(pkmn, preset)
+      return nil unless apply_pokemon_preset!(pkmn, preset)
       pkmn
     rescue => e
       log_error("Create Pokemon From Preset", e)
       nil
+    end
+
+    def detect_save_layout
+      layout = {}
+      appdata_root = ENV["APPDATA"]
+      layout[:appdata_available] = !appdata_root.nil? && appdata_root != ""
+      layout[:save_dir_candidates] = []
+      if layout[:appdata_available]
+        Dir.glob(File.join(appdata_root, "*")).each do |path|
+          next unless File.directory?(path)
+          layout[:save_dir_candidates] << File.basename(path) if File.basename(path).downcase.include?("pokemon")
+        end
+      end
+      layout
+    rescue => e
+      log_error("Detect Save Layout", e)
+      { :appdata_available => false, :save_dir_candidates => [] }
     end
 
     def assign_move!(pkmn, index, move_symbol)
@@ -2341,7 +3041,9 @@ module DeveloperMenu
           [trainer_type, trainer_name],
           [trainer_type, trainer_name, nil, false, version, false],
           [trainer_type, trainer_name, version],
-          [trainer_type, trainer_name, version, false]
+          [trainer_type, trainer_name, version, false],
+          [trainer_type, trainer_name, _INTL("Battle started by PokeDebug.")],
+          [trainer_type, trainer_name, _INTL("Battle started by PokeDebug."), false]
         ]
         attempts.each_with_index do |args, idx|
           begin
@@ -2729,13 +3431,19 @@ module DeveloperMenu
         end
       end
       cancel_vehicles_if_possible
-      pbFadeOutIn(99999) {
-        $game_temp.player_new_map_id = map_id
-        $game_temp.player_new_x = x
-        $game_temp.player_new_y = y
-        $game_temp.player_new_direction = 2
-        $scene.transfer_player if $scene.respond_to?(:transfer_player)
-      }
+      warped = false
+      if defined?(pbFadeOutIn)
+        pbFadeOutIn(99999) {
+          warped = warp_player_to_map!(map_id, x, y, 2)
+        }
+      else
+        warped = warp_player_to_map!(map_id, x, y, 2)
+      end
+      if warped
+        Kernel.pbMessage(_INTL("Warped to map {1} at ({2}, {3}).", map_id, x, y))
+      else
+        Kernel.pbMessage(_INTL("Could not warp on this engine."))
+      end
     end
 
     def engine_switches
@@ -2747,8 +3455,13 @@ module DeveloperMenu
       return if !id || id <= 0
       current = $game_switches[id]
       ch = Kernel.pbMessage(_INTL("Switch {1} ({2}): {3}", id, hash[id], current ? "ON" : "OFF"), ["ON", "OFF", "Cancel"], -1)
-      $game_switches[id] = (ch == 0) if ch >= 0 && ch < 2
-      $game_map.need_refresh = true if $game_map
+      if ch >= 0 && ch < 2
+        if set_game_switch!(id, ch == 0)
+          Kernel.pbMessage(_INTL("Switch {1} set to {2}.", id, ch == 0 ? "ON" : "OFF"))
+        else
+          Kernel.pbMessage(_INTL("Could not edit that switch on this engine."))
+        end
+      end
     end
 
     def engine_variables
@@ -2761,23 +3474,42 @@ module DeveloperMenu
       current = $game_variables[id] || 0
       params = ChooseNumberParams.new
       params.setRange(-999999, 999999); params.setInitialValue(current)
-      $game_variables[id] = Kernel.pbMessageChooseNumber(_INTL("Var {1} ({2}) = {3}. New:", id, hash[id], current), params)
-      $game_map.need_refresh = true if $game_map
+      new_value = Kernel.pbMessageChooseNumber(_INTL("Var {1} ({2}) = {3}. New:", id, hash[id], current), params)
+      if set_game_variable!(id, new_value)
+        Kernel.pbMessage(_INTL("Variable {1} set to {2}.", id, new_value))
+      else
+        Kernel.pbMessage(_INTL("Could not edit that variable on this engine."))
+      end
     end
 
     def engine_safari
       menu = [
         { :label => "Edit Steps", :action => proc { 
           params = ChooseNumberParams.new; params.setRange(0, 9999); params.setInitialValue($PokemonGlobal.safariSteps || 0)
-          $PokemonGlobal.safariSteps = Kernel.pbMessageChooseNumber(_INTL("Steps:"), params) if $PokemonGlobal.respond_to?(:safariSteps=)
+          new_value = Kernel.pbMessageChooseNumber(_INTL("Steps:"), params)
+          if set_safari_value!(:safariSteps, :safariSteps, new_value)
+            Kernel.pbMessage(_INTL("Safari steps set to {1}.", new_value))
+          else
+            Kernel.pbMessage(_INTL("Safari steps not supported on this engine."))
+          end
         }},
         { :label => "Edit Safari Balls", :action => proc {
           params = ChooseNumberParams.new; params.setRange(0, 99); params.setInitialValue($PokemonGlobal.safariBalls || 0)
-          $PokemonGlobal.safariBalls = Kernel.pbMessageChooseNumber(_INTL("Safari Balls:"), params) if $PokemonGlobal.respond_to?(:safariBalls=)
+          new_value = Kernel.pbMessageChooseNumber(_INTL("Safari Balls:"), params)
+          if set_safari_value!(:safariBalls, :safariBalls, new_value)
+            Kernel.pbMessage(_INTL("Safari Balls set to {1}.", new_value))
+          else
+            Kernel.pbMessage(_INTL("Safari Balls not supported on this engine."))
+          end
         }},
         { :label => "Edit Contest Balls", :action => proc {
           params = ChooseNumberParams.new; params.setRange(0, 99); params.setInitialValue($PokemonGlobal.bugContestBalls || 0)
-          $PokemonGlobal.bugContestBalls = Kernel.pbMessageChooseNumber(_INTL("Contest Balls:"), params) if $PokemonGlobal.respond_to?(:bugContestBalls=)
+          new_value = Kernel.pbMessageChooseNumber(_INTL("Contest Balls:"), params)
+          if set_safari_value!(:bugContestBalls, :bugContestBalls, new_value)
+            Kernel.pbMessage(_INTL("Contest Balls set to {1}.", new_value))
+          else
+            Kernel.pbMessage(_INTL("Contest Balls not supported on this engine."))
+          end
         }}
       ]
       render_dynamic_menu("Edit Safari/Contest", menu)
@@ -2787,16 +3519,28 @@ module DeveloperMenu
       menu = [
         { :label => "Repel Steps", :action => proc {
           params = ChooseNumberParams.new; params.setRange(0, 99999); params.setInitialValue(get_repel_steps || 0)
-          set_repel_steps(Kernel.pbMessageChooseNumber(_INTL("Repel Steps:"), params))
+          new_value = Kernel.pbMessageChooseNumber(_INTL("Repel Steps:"), params)
+          set_repel_steps(new_value)
+          if get_repel_steps.to_i == new_value.to_i
+            Kernel.pbMessage(_INTL("Repel steps set to {1}.", new_value))
+          else
+            Kernel.pbMessage(_INTL("Could not change repel steps on this engine."))
+          end
         }},
         { :label => "Toggle flash", :action => proc {
-          $PokemonGlobal.flashUsed = !$PokemonGlobal.flashUsed if $PokemonGlobal.respond_to?(:flashUsed=)
-          Kernel.pbMessage(_INTL("Flash: {1}", on_off_text($PokemonGlobal.flashUsed)))
+          new_state = !flash_enabled?
+          if set_flash_enabled!(new_state)
+            Kernel.pbMessage(_INTL("Flash: {1}", on_off_text(flash_enabled?)))
+          else
+            Kernel.pbMessage(_INTL("Flash not supported on this version."))
+          end
         }},
         { :label => "Toggle Strength", :action => proc {
-          if $PokemonMap.respond_to?(:strengthUsed=)
-            $PokemonMap.strengthUsed = !$PokemonMap.strengthUsed
-            Kernel.pbMessage(_INTL("Strength: {1}", $PokemonMap.strengthUsed ? "ON" : "OFF"))
+          new_state = !strength_enabled?
+          if set_strength_enabled!(new_state)
+            Kernel.pbMessage(_INTL("Strength: {1}", on_off_text(strength_enabled?)))
+          else
+            Kernel.pbMessage(_INTL("Strength not supported on this version."))
           end
         }},
         { :label => "Toggle Black Flute", :action => proc {
@@ -2820,14 +3564,16 @@ module DeveloperMenu
     end
 
     def engine_refresh_map
-      $game_map.need_refresh = true
-      if $game_map.events
+      if defined?($game_map) && $game_map && $game_map.events
         $game_map.events.values.each do |e|
           e.refresh if e.respond_to?(:refresh)
         end
       end
-      safe_set_map_changed($game_map.map_id) if $game_map
-      Kernel.pbMessage(_INTL("Map refreshed and events re-evaluated!"))
+      if mark_map_for_refresh!
+        Kernel.pbMessage(_INTL("Map refreshed and events re-evaluated!"))
+      else
+        Kernel.pbMessage(_INTL("Could not refresh the map on this engine."))
+      end
     end
 
     def engine_map_events
@@ -2879,12 +3625,16 @@ module DeveloperMenu
 
       menu = [
         { :label => "Deposit Pokemon", :action => proc {
-          choose_pokemon_with_callback do |pkmn|
-            if day_care_deposit_first(pkmn, dc)
-              remove_party_member(pkmn)
-              Kernel.pbMessage(_INTL("Deposited {1}.", pkmn.name))
-            else
-              Kernel.pbMessage(_INTL("Day care data not found!"))
+          if day_care_first_pokemon(dc)
+            Kernel.pbMessage(_INTL("The first day care slot is already occupied. Withdraw it first."))
+          else
+            choose_pokemon_with_callback do |pkmn|
+              if day_care_deposit_first(pkmn, dc)
+                remove_party_member(pkmn)
+                Kernel.pbMessage(_INTL("Deposited {1}.", pkmn.name))
+              else
+                Kernel.pbMessage(_INTL("Could not deposit this Pokemon on this engine."))
+              end
             end
           end
         }},
@@ -2892,14 +3642,18 @@ module DeveloperMenu
           if day_care_force_egg(dc)
             Kernel.pbMessage(_INTL("Day care egg forced successfully."))
           else
-            Kernel.pbMessage(_INTL("Day care data not found!"))
+            Kernel.pbMessage(_INTL("Could not force a day care egg on this engine."))
           end
         }},
         { :label => "Withdraw First Deposited", :action => proc {
           pkmn = day_care_withdraw_first(dc)
           if pkmn
-            add_pkmn_silently(pkmn)
-            Kernel.pbMessage(_INTL("Withdrew {1}.", pkmn.name))
+            if add_pkmn_silently(pkmn)
+              Kernel.pbMessage(_INTL("Withdrew {1}.", pkmn.name))
+            else
+              day_care_deposit_first(pkmn, dc)
+              Kernel.pbMessage(_INTL("Could not withdraw because the party is full or unsupported on this engine."))
+            end
           else
             Kernel.pbMessage(_INTL("No Pokemon in first slot."))
           end
@@ -2937,12 +3691,13 @@ module DeveloperMenu
       
       pkmn = create_pkmn(sp_sym, level)
       return Kernel.pbMessage(_INTL("Could not create Pokemon for this engine.")) unless pkmn
-      pkmn.form = form if pkmn.respond_to?(:form=) && form > 0
+      if form > 0 && !set_pokemon_form!(pkmn, form)
+        Kernel.pbMessage(_INTL("Could not set the selected form on this engine."))
+      end
       recalc_pokemon_stats(pkmn) if pkmn
       
       if Kernel.pbMessage("Make Shiny?", ["Yes", "No"], -1) == 0
-        pkmn.shiny = true if pkmn.respond_to?(:shiny=)
-        pkmn.makeShiny if pkmn.respond_to?(:makeShiny)
+        Kernel.pbMessage(_INTL("Could not make this test Pokemon shiny on this engine.")) unless set_pokemon_shiny!(pkmn, true)
       end
       
       if Kernel.pbMessage("Custom Moveset?", ["Yes", "No"], -1) == 0
@@ -2953,7 +3708,9 @@ module DeveloperMenu
           mid = search_list("Moves", mhash)
           if mid
             msym = get_symbol(:Move, mid)
-            assign_move!(pkmn, i, msym)
+            unless assign_move!(pkmn, i, msym)
+              Kernel.pbMessage(_INTL("Could not assign move to slot {1} on this engine.", i + 1))
+            end
           end
         end
       end
@@ -2989,23 +3746,12 @@ module DeveloperMenu
     end
 
     def engine_exp_all
-      if $PokemonGlobal.respond_to?(:exp_all)
-        $PokemonGlobal.exp_all = !$PokemonGlobal.exp_all
-        Kernel.pbMessage(_INTL("Global Exp All flag: {1}", $PokemonGlobal.exp_all ? "ON" : "OFF"))
-        return
-      end
-      
-      has_item = bag_has_item?(:EXPALL)
-      if has_item
-        bag_delete_item(:EXPALL)
+      was_enabled = exp_all_enabled?
+      if set_exp_all_enabled!(!was_enabled)
+        Kernel.pbMessage(_INTL("Exp All: {1}", exp_all_status_label))
       else
-        stored = bag_store_item(:EXPALL)
-        unless stored
-          expall_id = build_search_hash(:Item).key("EXPALL")
-          bag_store_item(get_symbol(:Item, expall_id)) if expall_id
-        end
+        Kernel.pbMessage(_INTL("Could not toggle Exp All on this engine."))
       end
-      Kernel.pbMessage(_INTL("Exp All Item: {1}", has_item ? "REMOVED" : "ADDED"))
     end
 # --- END 20_engine.rb ---
 
@@ -3030,6 +3776,7 @@ module DeveloperMenu
       return unless storage_available?
       return unless Kernel.pbConfirmMessage(_INTL("Fill ALL boxes with level 50 Pokemon (all detected forms)?"))
       box = 0; idx = 0
+      added = 0
       hash = build_search_hash(:Species)
       
       Kernel.pbMessage(_INTL("Generating... This may take a while."))
@@ -3050,6 +3797,7 @@ module DeveloperMenu
           break if box >= storage_max_boxes
           
           break unless set_storage_slot(box, idx, pkmn)
+          added += 1
           idx += 1
           if idx >= storage_max_pokemon(box)
             idx = 0; box += 1
@@ -3057,13 +3805,24 @@ module DeveloperMenu
         end
         break if box >= storage_max_boxes
       end
-      Kernel.pbMessage(_INTL("Filled up to box {1}!", box))
+      if added > 0
+        Kernel.pbMessage(_INTL("Added {1} Pokemon to storage.", added))
+      else
+        Kernel.pbMessage(_INTL("Could not add Pokemon to storage on this engine."))
+      end
     end
 
     def pokemon_clear_storage
       return unless Kernel.pbConfirmMessage(_INTL("Delete EVERYTHING in PC?"))
-      each_storage_index { |box, slot| set_storage_slot(box, slot, nil) }
-      Kernel.pbMessage(_INTL("PC Cleared!"))
+      cleared = 0
+      each_storage_index do |box, slot|
+        cleared += 1 if set_storage_slot(box, slot, nil)
+      end
+      if cleared > 0
+        Kernel.pbMessage(_INTL("PC Cleared!"))
+      else
+        Kernel.pbMessage(_INTL("Could not clear PC storage on this engine."))
+      end
     end
 
     def pokemon_expand_boxes
@@ -3177,8 +3936,11 @@ module DeveloperMenu
       end
 
       recalc_pokemon_stats(pkmn)
-      add_pkmn_silently(pkmn)
-      Kernel.pbMessage(_INTL("Added {1} (Lv.{2})!", pkmn.name, pokemon_level_value(pkmn)))
+      if add_pkmn_silently(pkmn)
+        Kernel.pbMessage(_INTL("Added {1} (Lv.{2})!", pkmn.name, pokemon_level_value(pkmn)))
+      else
+        Kernel.pbMessage(_INTL("Could not add {1} to the party on this engine.", pkmn.name))
+      end
     end
 
     def pokemon_import_preset
@@ -3186,8 +3948,11 @@ module DeveloperMenu
       return Kernel.pbMessage(_INTL("Preset file not found.")) unless preset
       pkmn = create_pokemon_from_preset(preset)
       return Kernel.pbMessage(_INTL("Could not create Pokemon from preset.")) unless pkmn
-      add_pkmn_silently(pkmn)
-      Kernel.pbMessage(_INTL("Pokemon imported from preset!"))
+      if add_pkmn_silently(pkmn)
+        Kernel.pbMessage(_INTL("Pokemon imported from preset!"))
+      else
+        Kernel.pbMessage(_INTL("Could not add the imported Pokemon on this engine."))
+      end
     end
 
     def menu_item
@@ -3210,8 +3975,11 @@ module DeveloperMenu
       params = ChooseNumberParams.new
       params.setRange(1, 999); params.setInitialValue(1)
       qty = Kernel.pbMessageChooseNumber(_INTL("Amount:"), params)
-      bag_store_item(itm_sym, qty)
-      Kernel.pbMessage(_INTL("Added {1} x{2}.", item_display_name(itm_sym), qty))
+      if bag_store_item(itm_sym, qty)
+        Kernel.pbMessage(_INTL("Added {1} x{2}.", item_display_name(itm_sym), qty))
+      else
+        Kernel.pbMessage(_INTL("Could not add {1} on this engine.", item_display_name(itm_sym)))
+      end
     end
 
     def item_fill(mode)
@@ -3267,30 +4035,37 @@ module DeveloperMenu
       menu = [
         { :label => "Quick Summary", :action => proc { show_player_summary } },
         { :label => "Edit Money", :action => proc { 
-          p = get_player
-          current_money = p.respond_to?(:money) ? p.money : 0
+          current_money = player_money_value
           params = ChooseNumberParams.new
           params.setRange(0, 9999999); params.setInitialValue(current_money)
           new_money = Kernel.pbMessageChooseNumber(_INTL("Money:"), params)
-          p.money = new_money if p.respond_to?(:money=)
-          Kernel.pbMessage(_INTL("Money set to {1}.", new_money))
+          if set_player_money!(new_money)
+            Kernel.pbMessage(_INTL("Money set to {1}.", new_money))
+          else
+            Kernel.pbMessage(_INTL("Could not edit money on this engine."))
+          end
         }},
         { :label => "Edit Coins", :action => proc { 
-          p = get_player
-          current_coins = p.respond_to?(:coins) ? p.coins : 0
+          current_coins = player_coin_value
           params = ChooseNumberParams.new
           params.setRange(0, 9999999); params.setInitialValue(current_coins)
           new_coins = Kernel.pbMessageChooseNumber(_INTL("Coins:"), params)
-          p.coins = new_coins if p.respond_to?(:coins=)
-          Kernel.pbMessage(_INTL("Coins set to {1}.", new_coins))
+          if set_player_coins!(new_coins)
+            Kernel.pbMessage(_INTL("Coins set to {1}.", new_coins))
+          else
+            Kernel.pbMessage(_INTL("Could not edit coins on this engine."))
+          end
         }},
         { :label => "Edit Battle Points", :action => proc { 
-          p = get_player
-          if p.respond_to?(:battle_points)
-            params = ChooseNumberParams.new; params.setRange(0, 9999999); params.setInitialValue(p.battle_points)
+          current_bp = player_battle_points_value
+          if current_bp > 0 || (get_player && (get_player.respond_to?(:battle_points) || get_player.respond_to?(:battlePoints) || get_player.respond_to?(:bp)))
+            params = ChooseNumberParams.new; params.setRange(0, 9999999); params.setInitialValue(current_bp)
             new_bp = Kernel.pbMessageChooseNumber(_INTL("Battle Points:"), params)
-            p.battle_points = new_bp
-            Kernel.pbMessage(_INTL("Battle Points set to {1}.", new_bp))
+            if set_player_battle_points!(new_bp)
+              Kernel.pbMessage(_INTL("Battle Points set to {1}.", new_bp))
+            else
+              Kernel.pbMessage(_INTL("Could not edit Battle Points on this engine."))
+            end
           else
             Kernel.pbMessage(_INTL("BP not supported."))
           end
@@ -3341,37 +4116,51 @@ module DeveloperMenu
       menu.push({ :label => t(TR[:name]), :action => proc { 
         p = get_player
         new_name = set_name_via_ui(p && p.respond_to?(:name) ? p.name : "")
-        if new_name && new_name != "" && p && p.respond_to?(:name=)
-          p.name = new_name
+        if set_player_name!(new_name)
           Kernel.pbMessage(_INTL("Player name changed to {1}.", new_name))
+        elsif new_name && new_name != ""
+          Kernel.pbMessage(_INTL("Could not change player name on this engine."))
         end
       }})
 
       menu.push({ :label => t(TR[:trainerid]), :action => proc { 
-        params = ChooseNumberParams.new; params.setRange(0, 999999999); params.setInitialValue(get_player.id || 0)
+        params = ChooseNumberParams.new; params.setRange(0, 999999999); params.setInitialValue(player_trainer_id_value)
         new_id = Kernel.pbMessageChooseNumber(_INTL("New ID:"), params)
-        get_player.id = new_id
-        Kernel.pbMessage(_INTL("Trainer ID set to {1}.", new_id))
+        if set_player_trainer_id!(new_id)
+          Kernel.pbMessage(_INTL("Trainer ID set to {1}.", new_id))
+        else
+          Kernel.pbMessage(_INTL("Could not change Trainer ID on this engine."))
+        end
       }})
 
       if $PokemonGlobal && $PokemonGlobal.respond_to?(:runningShoes)
         menu.push({ :label => t(TR[:shoes]), :action => proc {
-          $PokemonGlobal.runningShoes = !$PokemonGlobal.runningShoes
-          Kernel.pbMessage(_INTL("Running Shoes: {1}", on_off_text($PokemonGlobal.runningShoes)))
+          new_state = !running_shoes_enabled?
+          if set_running_shoes_enabled!(new_state)
+            Kernel.pbMessage(_INTL("Running Shoes: {1}", on_off_text(running_shoes_enabled?)))
+          else
+            Kernel.pbMessage(_INTL("Could not change Running Shoes on this engine."))
+          end
         }})
       end
 
       menu.push({ :label => t(TR[:pokedex_tog]), :action => proc {
-        get_player.pokedex = true if get_player.respond_to?(:pokedex=)
-        $PokemonGlobal.pokedexUnlocked = !$PokemonGlobal.pokedexUnlocked if $PokemonGlobal && $PokemonGlobal.respond_to?(:pokedexUnlocked)
-        current = $PokemonGlobal && $PokemonGlobal.respond_to?(:pokedexUnlocked) ? $PokemonGlobal.pokedexUnlocked : true
-        Kernel.pbMessage(_INTL("Pokedex: {1}", on_off_text(current)))
+        new_state = !pokedex_enabled?
+        result = set_pokedex_enabled!(new_state)
+        if result == false
+          Kernel.pbMessage(_INTL("Could not change the Pokedex flag on this engine."))
+        else
+          Kernel.pbMessage(_INTL("Pokedex: {1}", on_off_text(pokedex_enabled?)))
+        end
       }})
 
       menu.push({ :label => t(TR[:pokegear]), :action => proc {
-        get_player.pokegear = true if get_player.respond_to?(:pokegear=)
-        current = get_player.respond_to?(:pokegear) ? get_player.pokegear : true
-        Kernel.pbMessage(_INTL("Pokegear: {1}", on_off_text(!!current)))
+        new_state = !pokegear_enabled?
+        if set_pokegear_enabled!(new_state)
+          Kernel.pbMessage(_INTL("Pokegear: {1}", on_off_text(pokegear_enabled?)))
+        else
+          Kernel.pbMessage(_INTL("Could not change Pokegear on this engine."))
+        end
       }})
 
       menu.push({ :label => t(TR[:playtime]), :action => proc {
@@ -3379,16 +4168,22 @@ module DeveloperMenu
         current_hours = Graphics.frame_count / frame_rate_value / 60 / 60 rescue 0
         params.setInitialValue(current_hours)
         hours = Kernel.pbMessageChooseNumber(_INTL("Play Time (Hours):"), params)
-        Graphics.frame_count = hours * 60 * 60 * frame_rate_value
-        Kernel.pbMessage(_INTL("Play Time set to {1} hours.", hours))
+        if set_play_time_hours!(hours)
+          Kernel.pbMessage(_INTL("Play Time set to {1} hours.", hours))
+        else
+          Kernel.pbMessage(_INTL("Could not change play time on this engine."))
+        end
       }})
 
       if $PokemonGlobal && $PokemonGlobal.respond_to?(:region)
         menu.push({ :label => t(TR[:region]), :action => proc {
           params = ChooseNumberParams.new; params.setRange(0, 99); params.setInitialValue($PokemonGlobal.region || 0)
           new_region = Kernel.pbMessageChooseNumber(_INTL("Region ID:"), params)
-          $PokemonGlobal.region = new_region
-          Kernel.pbMessage(_INTL("Region set to {1}.", new_region))
+          if set_region_value!(new_region)
+            Kernel.pbMessage(_INTL("Region set to {1}.", new_region))
+          else
+            Kernel.pbMessage(_INTL("Could not change region on this engine."))
+          end
         }})
       end
 
@@ -3398,11 +4193,13 @@ module DeveloperMenu
 
       if $PokemonGlobal && $PokemonGlobal.respond_to?(:partner)
         menu.push({ :label => t(TR[:partner]), :action => proc {
-          if $PokemonGlobal.partner
-            $PokemonGlobal.partner = nil
+          result = clear_partner_data!
+          if result == true
             Kernel.pbMessage(_INTL("Partner cleared!"))
-          else
+          elsif result == :empty
             Kernel.pbMessage(_INTL("You don't have a partner right now."))
+          else
+            Kernel.pbMessage(_INTL("Could not clear partner data on this engine."))
           end
         }})
       end
@@ -3501,26 +4298,64 @@ module DeveloperMenu
 
     def party_hp(pkmn)
       menu = [
-        { :label => "Heal", :action => proc { heal_pokemon!(pkmn); Kernel.pbMessage(_INTL("{1} was healed.", pkmn.name)) } },
+        { :label => "Heal", :action => proc {
+          if heal_pokemon!(pkmn)
+            Kernel.pbMessage(_INTL("{1} was healed.", pkmn.name))
+          else
+            Kernel.pbMessage(_INTL("Could not heal {1} on this engine.", pkmn.name))
+          end
+        } },
         { :label => "Edit HP", :action => proc {
           params = ChooseNumberParams.new; params.setRange(0, 999999); params.setInitialValue(pkmn.hp)
-          set_pokemon_hp!(pkmn, Kernel.pbMessageChooseNumber(_INTL("HP:"), params))
+          new_hp = Kernel.pbMessageChooseNumber(_INTL("HP:"), params)
+          if set_pokemon_hp!(pkmn, new_hp)
+            Kernel.pbMessage(_INTL("HP set to {1}.", pkmn.hp))
+          else
+            Kernel.pbMessage(_INTL("Could not edit HP on this engine."))
+          end
         }},
-        { :label => "Faint", :action => proc { faint_pokemon!(pkmn) } },
+        { :label => "Faint", :action => proc {
+          if faint_pokemon!(pkmn)
+            Kernel.pbMessage(_INTL("{1} fainted.", pkmn.name))
+          else
+            Kernel.pbMessage(_INTL("Could not faint {1} on this engine.", pkmn.name))
+          end
+        } },
         { :label => "Status Problem", :action => proc {
           status_hash = build_search_hash(:Status)
           status_id = search_list("Status", status_hash)
           if status_id
             sym = get_symbol(:Status, status_id)
-            set_pokemon_status!(pkmn, sym)
+            if set_pokemon_status!(pkmn, sym)
+              Kernel.pbMessage(_INTL("Status changed to {1}.", sym))
+            else
+              Kernel.pbMessage(_INTL("Could not change status on this engine."))
+            end
           end
         }},
         { :label => "Clear Status", :action => proc {
-          clear_pokemon_status!(pkmn)
-          Kernel.pbMessage(_INTL("Status cleared for {1}.", pkmn.name))
+          if clear_pokemon_status!(pkmn)
+            Kernel.pbMessage(_INTL("Status cleared for {1}.", pkmn.name))
+          else
+            Kernel.pbMessage(_INTL("Could not clear status on this engine."))
+          end
         }},
-        { :label => "Give Pokerus", :action => proc { pkmn.givePokerus if pkmn.respond_to?(:givePokerus); Kernel.pbMessage(_INTL("Infected with Pokerus!")) } },
-        { :label => "Cure Pokerus", :action => proc { pkmn.pokerus = 0 if pkmn.respond_to?(:pokerus=); Kernel.pbMessage(_INTL("Pokerus cured for {1}.", pkmn.name)) } }
+        { :label => "Give Pokerus", :action => proc {
+          if pkmn.respond_to?(:givePokerus)
+            pkmn.givePokerus
+            Kernel.pbMessage(_INTL("Infected with Pokerus!"))
+          else
+            Kernel.pbMessage(_INTL("Pokerus not supported on this engine."))
+          end
+        } },
+        { :label => "Cure Pokerus", :action => proc {
+          if pkmn.respond_to?(:pokerus=)
+            pkmn.pokerus = 0
+            Kernel.pbMessage(_INTL("Pokerus cured for {1}.", pkmn.name))
+          else
+            Kernel.pbMessage(_INTL("Pokerus not supported on this engine."))
+          end
+        } }
       ]
       render_dynamic_menu("HP / Status", menu)
     end
@@ -3539,16 +4374,27 @@ module DeveloperMenu
           party_advanced_stat_editor(pkmn)
         }},
         { :label => "Max IVs", :action => proc { 
-          max_pokemon_ivs!(pkmn, 31)
-          Kernel.pbMessage(_INTL("IVs Maxed!"))
+          if max_pokemon_ivs!(pkmn, 31)
+            Kernel.pbMessage(_INTL("IVs Maxed!"))
+          else
+            Kernel.pbMessage(_INTL("Could not max IVs on this engine."))
+          end
         }},
         { :label => "Max EVs", :action => proc { 
-          max_pokemon_evs!(pkmn, 252)
-          Kernel.pbMessage(_INTL("EVs Maxed!"))
+          if max_pokemon_evs!(pkmn, 252)
+            Kernel.pbMessage(_INTL("EVs Maxed!"))
+          else
+            Kernel.pbMessage(_INTL("Could not max EVs on this engine."))
+          end
         }},
         { :label => "Edit Happiness", :action => proc { 
           params = ChooseNumberParams.new; params.setRange(0, 255); params.setInitialValue(pkmn.happiness)
-          set_pokemon_happiness!(pkmn, Kernel.pbMessageChooseNumber(_INTL("Happiness:"), params))
+          new_happiness = Kernel.pbMessageChooseNumber(_INTL("Happiness:"), params)
+          if set_pokemon_happiness!(pkmn, new_happiness)
+            Kernel.pbMessage(_INTL("Happiness set to {1}.", new_happiness))
+          else
+            Kernel.pbMessage(_INTL("Could not edit happiness on this engine."))
+          end
         }},
         { :label => "Max Contest Stats", :action => proc {
           %w[beauty cool cute smart tough sheen].each { |s| pkmn.send("#{s}=", 255) if pkmn.respond_to?("#{s}=") }
@@ -3626,20 +4472,32 @@ module DeveloperMenu
           end
         }},
         { :label => "Reset Moveset", :action => proc {
-          reset_pokemon_moves!(pkmn)
-          Kernel.pbMessage(_INTL("Moveset reset!"))
+          if reset_pokemon_moves!(pkmn)
+            Kernel.pbMessage(_INTL("Moveset reset!"))
+          else
+            Kernel.pbMessage(_INTL("Could not reset moveset on this engine."))
+          end
         }},
         { :label => "Save Current as Initial Moveset", :action => proc {
-          record_pokemon_initial_moves!(pkmn)
-          Kernel.pbMessage(_INTL("Moveset recorded as Initial!"))
+          if record_pokemon_initial_moves!(pkmn)
+            Kernel.pbMessage(_INTL("Moveset recorded as Initial!"))
+          else
+            Kernel.pbMessage(_INTL("Could not record initial moves on this engine."))
+          end
         }},
         { :label => "Restore PP", :action => proc {
-          restore_pokemon_pp!(pkmn)
-          Kernel.pbMessage(_INTL("PP Restored!"))
+          if restore_pokemon_pp!(pkmn)
+            Kernel.pbMessage(_INTL("PP Restored!"))
+          else
+            Kernel.pbMessage(_INTL("Could not restore PP on this engine."))
+          end
         }},
         { :label => "Max PP Ups", :action => proc {
-          max_pokemon_ppups!(pkmn, 3)
-          Kernel.pbMessage(_INTL("PP Ups maxed!"))
+          if max_pokemon_ppups!(pkmn, 3)
+            Kernel.pbMessage(_INTL("PP Ups maxed!"))
+          else
+            Kernel.pbMessage(_INTL("Could not edit PP Ups on this engine."))
+          end
         }}
       ]
       render_dynamic_menu("Moves", menu)
@@ -3655,11 +4513,19 @@ module DeveloperMenu
           item_id = search_list("Items", hash)
           if item_id
             sym = get_symbol(:Item, item_id)
-            set_pokemon_item!(pkmn, sym)
+            if set_pokemon_item!(pkmn, sym)
+              Kernel.pbMessage(_INTL("Held item set to {1}.", item_display_name(sym)))
+            else
+              Kernel.pbMessage(_INTL("Could not set held item on this engine."))
+            end
           end
         }},
         { :label => "Remove Held Item", :action => proc {
-          remove_pokemon_item!(pkmn)
+          if remove_pokemon_item!(pkmn)
+            Kernel.pbMessage(_INTL("Held item removed."))
+          else
+            Kernel.pbMessage(_INTL("Could not remove held item on this engine."))
+          end
         }}
       ]
       render_dynamic_menu("Held Item", menu)
@@ -3683,12 +4549,19 @@ module DeveloperMenu
           id = search_list("Abilities", hash)
           if id
             sym = get_symbol(:Ability, id)
-            set_pokemon_ability!(pkmn, sym, 2)
+            if set_pokemon_ability!(pkmn, sym, 2)
+              Kernel.pbMessage(_INTL("Ability set to {1}.", ability_display_name(sym)))
+            else
+              Kernel.pbMessage(_INTL("Could not set ability on this engine."))
+            end
           end
         }},
         { :label => "Reset Ability", :action => proc {
-          reset_pokemon_ability!(pkmn)
-          Kernel.pbMessage(_INTL("Ability reset!"))
+          if reset_pokemon_ability!(pkmn)
+            Kernel.pbMessage(_INTL("Ability reset!"))
+          else
+            Kernel.pbMessage(_INTL("Could not reset ability on this engine."))
+          end
         }},
         { :label => "Export Ability IDs", :action => proc {
           dump_ids(:Ability, "Ability_ID_List.txt")
@@ -3704,7 +4577,11 @@ module DeveloperMenu
           id = search_list("Natures", hash)
           if id
             sym = get_symbol(:Nature, id)
-            set_pokemon_nature!(pkmn, sym)
+            if set_pokemon_nature!(pkmn, sym)
+              Kernel.pbMessage(_INTL("Nature set to {1}.", sym))
+            else
+              Kernel.pbMessage(_INTL("Could not change nature on this engine."))
+            end
           end
         }},
         { :label => "Set Legal Gender", :action => proc {
@@ -3714,9 +4591,27 @@ module DeveloperMenu
             Kernel.pbMessage(_INTL("Pokemon is genderless or not supported."))
           end
         }},
-        { :label => "Force Gender (Male)", :action => proc { set_pokemon_gender!(pkmn, :male) } },
-        { :label => "Force Gender (Female)", :action => proc { set_pokemon_gender!(pkmn, :female) } },
-        { :label => "Force Gender (Genderless)", :action => proc { set_pokemon_gender!(pkmn, :genderless) } }
+        { :label => "Force Gender (Male)", :action => proc {
+          if set_pokemon_gender!(pkmn, :male)
+            Kernel.pbMessage(_INTL("Gender forced to male."))
+          else
+            Kernel.pbMessage(_INTL("Could not force gender on this engine."))
+          end
+        } },
+        { :label => "Force Gender (Female)", :action => proc {
+          if set_pokemon_gender!(pkmn, :female)
+            Kernel.pbMessage(_INTL("Gender forced to female."))
+          else
+            Kernel.pbMessage(_INTL("Could not force gender on this engine."))
+          end
+        } },
+        { :label => "Force Gender (Genderless)", :action => proc {
+          if set_pokemon_gender!(pkmn, :genderless)
+            Kernel.pbMessage(_INTL("Gender forced to genderless."))
+          else
+            Kernel.pbMessage(_INTL("Could not force gender on this engine."))
+          end
+        } }
       ]
       render_dynamic_menu("Nature & Gender", menu)
     end
@@ -3728,17 +4623,28 @@ module DeveloperMenu
           id = search_list("Species", hash)
           if id
             sym = get_symbol(:Species, id)
-            set_pokemon_species!(pkmn, sym)
+            if set_pokemon_species!(pkmn, sym)
+              Kernel.pbMessage(_INTL("Species changed to {1}.", pokemon_species_name(pkmn)))
+            else
+              Kernel.pbMessage(_INTL("Could not change species on this engine."))
+            end
           end
         }},
         { :label => "Change Form", :action => proc {
           params = ChooseNumberParams.new; params.setRange(0, 50); params.setInitialValue(pkmn.form || 0)
           new_form = Kernel.pbMessageChooseNumber(_INTL("Form ID:"), params)
-          set_pokemon_form!(pkmn, new_form)
+          if set_pokemon_form!(pkmn, new_form)
+            Kernel.pbMessage(_INTL("Form set to {1}.", new_form))
+          else
+            Kernel.pbMessage(_INTL("Could not change form on this engine."))
+          end
         }},
         { :label => "Remove Form Override", :action => proc {
-          clear_pokemon_form_override!(pkmn)
-          Kernel.pbMessage(_INTL("Override removed!"))
+          if clear_pokemon_form_override!(pkmn)
+            Kernel.pbMessage(_INTL("Override removed!"))
+          else
+            Kernel.pbMessage(_INTL("Could not remove form override on this engine."))
+          end
         }}
       ]
       render_dynamic_menu("Species & Form", menu)
@@ -3751,13 +4657,20 @@ module DeveloperMenu
         }},
         { :label => "Toggle Shiny", :action => proc {
           current = pkmn.respond_to?(:shiny?) ? pkmn.shiny? : (pkmn.respond_to?(:shiny) ? pkmn.shiny : false)
-          set_pokemon_shiny!(pkmn, !current)
-          Kernel.pbMessage(_INTL("Shiny: {1}", !current ? "ON" : "OFF"))
+          if set_pokemon_shiny!(pkmn, !current)
+            Kernel.pbMessage(_INTL("Shiny: {1}", !current ? "ON" : "OFF"))
+          else
+            Kernel.pbMessage(_INTL("Could not change shiny state on this engine."))
+          end
         }},
         { :label => "Set Poke ball", :action => proc {
           id = choose_poke_ball_id
           if id
-            set_pokemon_ball!(pkmn, id)
+            if set_pokemon_ball!(pkmn, id)
+              Kernel.pbMessage(_INTL("Poke Ball updated."))
+            else
+              Kernel.pbMessage(_INTL("Could not change Poke Ball on this engine."))
+            end
           end
         }},
         { :label => "Add Ribbon", :action => proc {
@@ -3765,12 +4678,19 @@ module DeveloperMenu
           id = search_list("Ribbons", hash)
           if id
             sym = get_symbol(:Ribbon, id)
-            add_pokemon_ribbon!(pkmn, sym)
+            if add_pokemon_ribbon!(pkmn, sym)
+              Kernel.pbMessage(_INTL("Ribbon added."))
+            else
+              Kernel.pbMessage(_INTL("Could not add ribbon on this engine."))
+            end
           end
         }},
         { :label => "Clear All Ribbons", :action => proc {
-          clear_pokemon_ribbons!(pkmn)
-          Kernel.pbMessage(_INTL("Ribbons cleared!"))
+          if clear_pokemon_ribbons!(pkmn)
+            Kernel.pbMessage(_INTL("Ribbons cleared!"))
+          else
+            Kernel.pbMessage(_INTL("Could not clear ribbons on this engine."))
+          end
         }},
         { :label => "Change OT Name", :action => proc {
           rename_pokemon_ot_via_ui!(pkmn)
@@ -3781,9 +4701,30 @@ module DeveloperMenu
 
     def party_flags(pkmn)
       menu = [
-        { :label => "Toggle Cannot Store", :action => proc { pkmn.cannot_store = !pkmn.cannot_store if pkmn.respond_to?(:cannot_store=); Kernel.pbMessage(_INTL("Cannot Store: {1}", pkmn.respond_to?(:cannot_store) ? on_off_text(!!pkmn.cannot_store) : "N/A")) } },
-        { :label => "Toggle Cannot Release", :action => proc { pkmn.cannot_release = !pkmn.cannot_release if pkmn.respond_to?(:cannot_release=); Kernel.pbMessage(_INTL("Cannot Release: {1}", pkmn.respond_to?(:cannot_release) ? on_off_text(!!pkmn.cannot_release) : "N/A")) } },
-        { :label => "Toggle Cannot Trade", :action => proc { pkmn.cannot_trade = !pkmn.cannot_trade if pkmn.respond_to?(:cannot_trade=); Kernel.pbMessage(_INTL("Cannot Trade: {1}", pkmn.respond_to?(:cannot_trade) ? on_off_text(!!pkmn.cannot_trade) : "N/A")) } }
+        { :label => "Toggle Cannot Store", :action => proc {
+          if pkmn.respond_to?(:cannot_store=)
+            pkmn.cannot_store = !pkmn.cannot_store
+            Kernel.pbMessage(_INTL("Cannot Store: {1}", pkmn.respond_to?(:cannot_store) ? on_off_text(!!pkmn.cannot_store) : "N/A"))
+          else
+            Kernel.pbMessage(_INTL("Cannot Store flag not supported on this engine."))
+          end
+        } },
+        { :label => "Toggle Cannot Release", :action => proc {
+          if pkmn.respond_to?(:cannot_release=)
+            pkmn.cannot_release = !pkmn.cannot_release
+            Kernel.pbMessage(_INTL("Cannot Release: {1}", pkmn.respond_to?(:cannot_release) ? on_off_text(!!pkmn.cannot_release) : "N/A"))
+          else
+            Kernel.pbMessage(_INTL("Cannot Release flag not supported on this engine."))
+          end
+        } },
+        { :label => "Toggle Cannot Trade", :action => proc {
+          if pkmn.respond_to?(:cannot_trade=)
+            pkmn.cannot_trade = !pkmn.cannot_trade
+            Kernel.pbMessage(_INTL("Cannot Trade: {1}", pkmn.respond_to?(:cannot_trade) ? on_off_text(!!pkmn.cannot_trade) : "N/A"))
+          else
+            Kernel.pbMessage(_INTL("Cannot Trade flag not supported on this engine."))
+          end
+        } }
       ]
       render_dynamic_menu("Discardable Flags", menu)
     end
@@ -3791,16 +4732,25 @@ module DeveloperMenu
     def party_egg(pkmn)
       menu = [
         { :label => "Make Egg", :action => proc { 
-          make_pokemon_egg!(pkmn)
-          Kernel.pbMessage(_INTL("{1} was turned into an Egg.", pkmn.name))
+          if make_pokemon_egg!(pkmn)
+            Kernel.pbMessage(_INTL("{1} was turned into an Egg.", pkmn.name))
+          else
+            Kernel.pbMessage(_INTL("Could not turn {1} into an Egg on this engine.", pkmn.name))
+          end
         }},
         { :label => "Hatch Egg", :action => proc { 
-          hatch_pokemon_egg!(pkmn)
-          Kernel.pbMessage(_INTL("{1} hatched successfully.", pkmn.name))
+          if hatch_pokemon_egg!(pkmn)
+            Kernel.pbMessage(_INTL("{1} hatched successfully.", pkmn.name))
+          else
+            Kernel.pbMessage(_INTL("Could not hatch {1} on this engine.", pkmn.name))
+          end
         }},
         { :label => "1 Step to Hatch", :action => proc { 
-          set_pokemon_hatch_steps!(pkmn, 1)
-          Kernel.pbMessage(_INTL("{1} will hatch in 1 step.", pkmn.name))
+          if set_pokemon_hatch_steps!(pkmn, 1)
+            Kernel.pbMessage(_INTL("{1} will hatch in 1 step.", pkmn.name))
+          else
+            Kernel.pbMessage(_INTL("Could not edit hatch steps on this engine."))
+          end
         }}
       ]
       render_dynamic_menu("Egg Options", menu)
@@ -3810,8 +4760,11 @@ module DeveloperMenu
       return unless Kernel.pbConfirmMessage(_INTL("Duplicate {1}?", pkmn.name))
       clone = duplicate_pokemon(pkmn)
       return Kernel.pbMessage(_INTL("Could not duplicate this Pokemon.")) unless clone
-      add_pkmn_silently(clone)
-      Kernel.pbMessage(_INTL("Duplicated!"))
+      if add_pkmn_silently(clone)
+        Kernel.pbMessage(_INTL("Duplicated!"))
+      else
+        Kernel.pbMessage(_INTL("Could not add the duplicate on this engine."))
+      end
     end
 
     def party_export_preset(pkmn)
