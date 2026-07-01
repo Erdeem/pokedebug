@@ -64,7 +64,8 @@ function Format-State([bool]$Value) {
     return "OFF"
 }
 
-function Get-InjectionStrategy([System.Collections.IDictionary]$Diagnostics) {
+function Get-InjectionStrategy {
+    param($Diagnostics)
     $strategy = [ordered]@{
         Name = "Unknown"
         Confidence = "Low"
@@ -97,13 +98,15 @@ function Get-InjectionStrategy([System.Collections.IDictionary]$Diagnostics) {
     return $strategy
 }
 
-function Get-PackedExeCandidate([string]$ResolvedGameDir) {
+function Get-PackedExeCandidate {
+    param([string]$ResolvedGameDir)
     Get-ChildItem -Path $ResolvedGameDir -Filter "*.exe" -ErrorAction SilentlyContinue |
         Sort-Object Length -Descending |
         Select-Object -First 1
 }
 
-function Test-EnigmaPackedGame([string]$ResolvedGameDir) {
+function Test-EnigmaPackedGame {
+    param([string]$ResolvedGameDir)
     $result = [ordered]@{
         Packed = $false
         Confidence = "Low"
@@ -145,7 +148,12 @@ function Test-EnigmaPackedGame([string]$ResolvedGameDir) {
     $result
 }
 
-function Read-MenuChoice([string]$Prompt, [string[]]$AllowedValues, [string]$DefaultValue) {
+function Read-MenuChoice {
+    param(
+        [string]$Prompt,
+        [string[]]$AllowedValues,
+        [string]$DefaultValue
+    )
     $allowedLookup = @{}
     foreach ($item in $AllowedValues) {
         $allowedLookup[$item.ToLowerInvariant()] = $true
@@ -163,55 +171,65 @@ function Read-MenuChoice([string]$Prompt, [string[]]$AllowedValues, [string]$Def
     }
 }
 
-function Get-InstallDiagnostics([string]$ResolvedGameDir) {
+function Get-InstallDiagnostics {
+    param([string]$ResolvedGameDir)
+
     $mkxpPath = Join-Path $ResolvedGameDir "mkxp.json"
     $dataDir = Join-Path $ResolvedGameDir "Data"
     $rxDataPath = Join-Path $ResolvedGameDir "Data\Scripts.rxdata"
-    $archive = Get-ChildItem -Path $ResolvedGameDir -Filter "*.rgss*a*" -ErrorAction SilentlyContinue | Select-Object -First 1
     $pluginScripts = Join-Path $ResolvedGameDir "Data\PluginScripts.rxdata"
+    $archive = Get-ChildItem -Path $ResolvedGameDir -Filter "*.rgss*a*" -ErrorAction SilentlyContinue | Select-Object -First 1
     $enigma = Test-EnigmaPackedGame $ResolvedGameDir
+
     $archiveName = ""
+    $hasRgssArchive = $false
     if ($archive) {
         $archiveName = $archive.Name
+        $hasRgssArchive = $true
     }
-    [ordered]@{
-        GameDir = $ResolvedGameDir
-        HasMkxp = Test-Path $mkxpPath -PathType Leaf
-        HasDataDir = Test-Path $dataDir -PathType Container
-        HasScriptsRxdata = Test-Path $rxDataPath -PathType Leaf
-        HasRgssArchive = $null -ne $archive
-        ArchiveName = $archiveName
-        HasPluginScripts = Test-Path $pluginScripts -PathType Leaf
-        EnigmaPacked = $enigma.Packed
-        EnigmaConfidence = $enigma.Confidence
-        EnigmaEvidence = $enigma.Evidence
-        PackedExePath = $enigma.ExePath
-    }
+
+    $diagnostics = New-Object System.Collections.Hashtable
+    $diagnostics["GameDir"] = $ResolvedGameDir
+    $diagnostics["HasMkxp"] = (Test-Path $mkxpPath -PathType Leaf)
+    $diagnostics["HasDataDir"] = (Test-Path $dataDir -PathType Container)
+    $diagnostics["HasScriptsRxdata"] = (Test-Path $rxDataPath -PathType Leaf)
+    $diagnostics["HasRgssArchive"] = $hasRgssArchive
+    $diagnostics["ArchiveName"] = $archiveName
+    $diagnostics["HasPluginScripts"] = (Test-Path $pluginScripts -PathType Leaf)
+    $diagnostics["EnigmaPacked"] = $enigma.Packed
+    $diagnostics["EnigmaConfidence"] = $enigma.Confidence
+    $diagnostics["EnigmaEvidence"] = $enigma.Evidence
+    $diagnostics["PackedExePath"] = $enigma.ExePath
+    return $diagnostics
 }
 
-function Show-InstallDiagnostics([System.Collections.IDictionary]$Diagnostics) {
+function Show-InstallDiagnostics {
+    param($Diagnostics)
+
     $archiveLabel = "OFF"
-    $enigmaColor = "Gray"
-    if ($Diagnostics.HasRgssArchive) {
-        $archiveLabel = $Diagnostics.ArchiveName
+    if ($Diagnostics["HasRgssArchive"]) {
+        $archiveLabel = $Diagnostics["ArchiveName"]
     }
-    if ($Diagnostics.EnigmaPacked) {
+
+    $enigmaColor = "Gray"
+    if ($Diagnostics["EnigmaPacked"]) {
         $enigmaColor = "Yellow"
     }
+
     $strategy = Get-InjectionStrategy $Diagnostics
     Show-Section (Get-Msg "Game Detection" "Deteccao do Jogo" "Deteccion del Juego")
-    Log ("Path: {0}" -f $Diagnostics.GameDir) "Gray"
-    Log ("MKXP-Z: {0}" -f (Format-State $Diagnostics.HasMkxp)) "Gray"
-    Log ("Data folder: {0}" -f (Format-State $Diagnostics.HasDataDir)) "Gray"
-    Log ("Scripts.rxdata: {0}" -f (Format-State $Diagnostics.HasScriptsRxdata)) "Gray"
+    Log ("Path: {0}" -f $Diagnostics["GameDir"]) "Gray"
+    Log ("MKXP-Z: {0}" -f (Format-State $Diagnostics["HasMkxp"])) "Gray"
+    Log ("Data folder: {0}" -f (Format-State $Diagnostics["HasDataDir"])) "Gray"
+    Log ("Scripts.rxdata: {0}" -f (Format-State $Diagnostics["HasScriptsRxdata"])) "Gray"
     Log ("RGSS archive: {0}" -f $archiveLabel) "Gray"
-    Log ("PluginScripts.rxdata: {0}" -f (Format-State $Diagnostics.HasPluginScripts)) "Gray"
-    Log ("Enigma packed guess: {0}" -f (Format-State $Diagnostics.EnigmaPacked)) $enigmaColor
-    if ($Diagnostics.EnigmaPacked) {
-      Log ("Enigma confidence: {0}" -f $Diagnostics.EnigmaConfidence) "Yellow"
-      if ($Diagnostics.EnigmaEvidence -and $Diagnostics.EnigmaEvidence.Count -gt 0) {
-        Log ("Enigma evidence: {0}" -f ($Diagnostics.EnigmaEvidence -join ", ")) "DarkGray"
-      end
+    Log ("PluginScripts.rxdata: {0}" -f (Format-State $Diagnostics["HasPluginScripts"])) "Gray"
+    Log ("Enigma packed guess: {0}" -f (Format-State $Diagnostics["EnigmaPacked"])) $enigmaColor
+    if ($Diagnostics["EnigmaPacked"]) {
+        Log ("Enigma confidence: {0}" -f $Diagnostics["EnigmaConfidence"]) "Yellow"
+        if ($Diagnostics["EnigmaEvidence"] -and $Diagnostics["EnigmaEvidence"].Count -gt 0) {
+            Log ("Enigma evidence: {0}" -f ($Diagnostics["EnigmaEvidence"] -join ", ")) "DarkGray"
+        }
     }
     Log ("Injection method: {0}" -f $strategy.Name) $strategy.Color
     Log ("Detection confidence: {0}" -f $strategy.Confidence) $strategy.Color
@@ -244,7 +262,17 @@ function Show-MainActionMenu {
     return (Read-MenuChoice (Get-Msg "> Choose action (Default: 1)" "> Escolha a acao (Padrao: 1)" "> Elige la accion (Por defecto: 1)") @("1","2","3","4","5") "1")
 }
 
-function Show-SettingsSummary([string]$ResolvedGameDir, [string]$MenuKey, [string]$WtwKey, [string]$HealKey, [bool]$EnableNativeDebugBootstrap, [bool]$DisableCompilerBootstrap, [bool]$DryRunMode, [System.Collections.IDictionary]$Diagnostics) {
+function Show-SettingsSummary {
+    param(
+        [string]$ResolvedGameDir,
+        [string]$MenuKey,
+        [string]$WtwKey,
+        [string]$HealKey,
+        [bool]$EnableNativeDebugBootstrap,
+        [bool]$DisableCompilerBootstrap,
+        [bool]$DryRunMode,
+        $Diagnostics
+    )
     $strategy = Get-InjectionStrategy $Diagnostics
     Show-Section (Get-Msg "Injection Summary" "Resumo da Injecao" "Resumen de Inyeccion")
     Log ("GameDir: {0}" -f $ResolvedGameDir) "Gray"
@@ -785,9 +813,9 @@ try {
 
         if ($enigmaInfo.Packed -and $null -ne $packedExe) {
             Log (Get-Msg "`n[!] Enigma Virtual Box packed game detected!" "`n[!] Jogo empacotado com Enigma Virtual Box detectado!" "`n[!] Juego empaquetado con Enigma Virtual Box detectado!") "Yellow"
-            Log ((Get-Msg "[*] Detection confidence: {1}" "[*] Confianca da deteccao: {1}" "[*] Confianza de deteccion: {1}") -f $enigmaInfo.Confidence) "Yellow"
+            Log ((Get-Msg "[*] Detection confidence: {0}" "[*] Confianca da deteccao: {0}" "[*] Confianza de deteccion: {0}") -f $enigmaInfo.Confidence) "Yellow"
             if ($enigmaInfo.Evidence.Count -gt 0) {
-                Log ((Get-Msg "[*] Evidence: {1}" "[*] Evidencias: {1}" "[*] Evidencias: {1}") -f ($enigmaInfo.Evidence -join ", ")) "DarkGray"
+                Log ((Get-Msg "[*] Evidence: {0}" "[*] Evidencias: {0}" "[*] Evidencias: {0}") -f ($enigmaInfo.Evidence -join ", ")) "DarkGray"
             }
             Log (Get-Msg "Would you like to automatically unpack it to inject the mod? (Y/N)" "Deseja descompactar automaticamente para injetar o mod? (S/N)" "Deseas descomprimir automaticamente para inyectar el mod? (S/N)") "Yellow"
             $ans = Read-Host "> "

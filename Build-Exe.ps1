@@ -27,19 +27,25 @@ $ps1 = Get-Content $InstallPs -Raw
 
 # --- NO OBFUSCATION (Plaintext Injection) ---
 $obfuscatedGodMode = $godMode
+$godModeBase64 = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($obfuscatedGodMode))
+$preloadBase64 = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($preload))
 # -------------------------------------------
 
 # 2. Build Monolithic PS1
 Assert-Contains $ps1 "    `$godModeContent = [System.IO.File]::ReadAllText(`$SourceGodMode, [System.Text.Encoding]::UTF8)" "Could not find god_mode_source.rb load marker in Install.ps1."
 $ps1 = $ps1.Replace(
     "    `$godModeContent = [System.IO.File]::ReadAllText(`$SourceGodMode, [System.Text.Encoding]::UTF8)",
-    "    `$godModeContent = @'`n$obfuscatedGodMode`n'@"
+    "    `$godModeBase64 = '$godModeBase64'`n    `$godModeContent = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(`$godModeBase64))"
 )
 $ps1 = $ps1 -replace '(?s)    \$SourceGodMode = Join-Path \$PSScriptRoot "god_mode_source\.rb".*?exit 1\r?\n    \}', ""
-$ps1 = $ps1.Insert($ps1.IndexOf("    `$godModeContent = @'"), "    `$DestGodMode = Join-Path `$PluginDir `"god_mode.rb`"`n")
+$godModeInsertMarker = $ps1.IndexOf("    `$godModeBase64 = '")
+if ($godModeInsertMarker -lt 0) {
+    throw "Could not find generated god mode base64 marker in Install.ps1."
+}
+$ps1 = $ps1.Insert($godModeInsertMarker, "    `$DestGodMode = Join-Path `$PluginDir `"god_mode.rb`"`n")
 
 $patternPreload = '(?ms)\s+\$SourcePreload = Join-Path \$PSScriptRoot "preload_gm\.rb".*?\r?\n\s+\$JsonPath = Join-Path \$GameDir "mkxp\.json"'
-$replacementPreload = "`n`n    `$DestPreload = Join-Path `$GameDir `"preload_gm.rb`"`n    `$preloadContent = @'`n$preload`n'@`n    `$utf8NoBom = New-Object System.Text.UTF8Encoding `$false`n    [System.IO.File]::WriteAllText(`$DestPreload, `$preloadContent, `$utf8NoBom)`n`n    `$JsonPath = Join-Path `$GameDir `"mkxp.json`"`n"
+$replacementPreload = "`n`n    `$DestPreload = Join-Path `$GameDir `"preload_gm.rb`"`n    `$preloadBase64 = '$preloadBase64'`n    `$preloadContent = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String(`$preloadBase64))`n    `$utf8NoBom = New-Object System.Text.UTF8Encoding `$false`n    [System.IO.File]::WriteAllText(`$DestPreload, `$preloadContent, `$utf8NoBom)`n`n    `$JsonPath = Join-Path `$GameDir `"mkxp.json`"`n"
 $ps1 = $ps1 -replace $patternPreload, $replacementPreload
 
 Assert-Contains $ps1 '$DestPreload = Join-Path $GameDir "preload_gm.rb"' "Monolithic preload injection failed."
