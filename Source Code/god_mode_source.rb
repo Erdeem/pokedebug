@@ -108,10 +108,36 @@ module DeveloperMenu
       end
     end
 
+    def log_item_debug(message)
+      nil
+    rescue
+    end
+
     def try_call(context_name = nil)
       yield
     rescue => e
       log_error(context_name || "Operation", e)
+      nil
+    end
+
+    def try_variants(context_name, variants)
+      last_error = nil
+      variants.each do |variant|
+        begin
+          return variant.call
+        rescue ArgumentError => e
+          last_error = e
+          next
+        rescue => e
+          last_error = e
+          log_error(context_name, e)
+          next
+        end
+      end
+      log_error(context_name, last_error) if last_error
+      nil
+    rescue => e
+      log_error(context_name, e)
       nil
     end
 
@@ -180,6 +206,16 @@ module DeveloperMenu
 
     def menu_triggered?
       trigger_hotkey?(MENU_HOTKEY.to_sym, MENU_HOTKEY) || joiplay_combo_triggered?
+    end
+
+    def plugin_message_window_busy?
+      return false unless defined?($game_temp) && $game_temp
+      return true if $game_temp.respond_to?(:message_window_showing) && $game_temp.message_window_showing
+      return true if $game_temp.respond_to?(:in_menu) && $game_temp.in_menu
+      false
+    rescue => e
+      log_error("Plugin Message Busy", e)
+      false
     end
 
     def player_party
@@ -1075,11 +1111,23 @@ module DeveloperMenu
         proc { pbChoosePokemon(1, 2, block) },
         proc { pbChoosePokemon(1, 2, &block) },
         proc { pbChoosePokemon(1, &block) },
-        proc { pbChoosePokemon(&block) }
+        proc { pbChoosePokemon(&block) },
+        proc { pbChoosePokemon(1, 2) },
+        proc { pbChoosePokemon(1) },
+        proc { pbChoosePokemon() }
       ]
       attempts.each do |attempt|
         begin
-          attempt.call
+          result = attempt.call
+          if block && !result.nil?
+            if result.is_a?(Integer) && result >= 0
+              party = player_party
+              chosen = party[result]
+              block.call(chosen) if chosen
+            elsif pokemon_like_object?(result)
+              block.call(result)
+            end
+          end
           return true
         rescue ArgumentError
           next
@@ -1183,92 +1231,70 @@ module DeveloperMenu
     end
 
     def open_native_debug_menu
-      if cached_engine_profile[:has_legacy_debug_menu]
-        pbDebugMenu
-        return true
-      end
-
-      if defined?(pbDebugMenuCommands)
-        pbDebugMenuCommands
-        return true
-      end
-
-      if defined?(pbDebugMenu)
-        pbDebugMenu
-        return true
-      end
-
-      if cached_engine_profile[:has_modern_debug_menu] && DebugMenu.respond_to?(:new)
-        DebugMenu.new.pbStartScreen
-        return true
-      end
-
-      if defined?(DebugMenu) && DebugMenu.respond_to?(:pbStartScreen)
-        DebugMenu.pbStartScreen
-        return true
-      end
-
-      if defined?(PokemonDebugMenu_Scene) && defined?(PokemonDebugMenuScreen)
-        scene = PokemonDebugMenu_Scene.new
-        screen = PokemonDebugMenuScreen.new(scene)
-        screen.pbStartScreen
-        return true
-      end
-
-      false
+      result = try_variants("Native Debug Menu", [
+        (proc { pbDebugMenu; true if defined?(pbDebugMenu) }),
+        (proc { pbDebugMenuCommands; true if defined?(pbDebugMenuCommands) }),
+        (proc { DebugMenu.new.pbStartScreen; true if defined?(DebugMenu) && DebugMenu.respond_to?(:new) }),
+        (proc { DebugMenu.pbStartScreen; true if defined?(DebugMenu) && DebugMenu.respond_to?(:pbStartScreen) }),
+        (proc {
+          if defined?(PokemonDebugMenu_Scene) && defined?(PokemonDebugMenuScreen)
+            scene = PokemonDebugMenu_Scene.new
+            PokemonDebugMenuScreen.new(scene).pbStartScreen
+            true
+          end
+        }),
+        (proc {
+          if defined?(PokemonDebugMenuScene) && defined?(PokemonDebugMenuScreen)
+            scene = PokemonDebugMenuScene.new
+            PokemonDebugMenuScreen.new(scene).pbStartScreen
+            true
+          end
+        })
+      ])
+      !!result
     rescue => e
       log_error("Native Debug Menu", e)
       false
     end
 
     def open_native_pokemon_editor(pkmn = nil)
-      if defined?(pbPokemonDebug)
-        begin
-          return true if pbPokemonDebug(pkmn)
-        rescue ArgumentError
-          return true if pbPokemonDebug(pkmn, nil)
-        end
-      end
-
-      if defined?(pbDebugPokemon)
-        begin
-          return true if pbDebugPokemon(pkmn)
-        rescue ArgumentError
-          return true if pbDebugPokemon(pkmn, nil)
-        end
-      end
-
-      if defined?(pbEditPokemon)
-        begin
-          return true if pbEditPokemon(pkmn)
-        rescue ArgumentError
-          return true if pbEditPokemon(pkmn, nil)
-        end
-      end
-
-      if defined?(pbPokemonEditor)
-        begin
-          return true if pbPokemonEditor(pkmn)
-        rescue ArgumentError
-          return true if pbPokemonEditor(pkmn, nil)
-        end
-      end
-
-      if defined?(PokemonDebug_Scene) && defined?(PokemonDebugScreen)
-        scene = PokemonDebug_Scene.new
-        screen = PokemonDebugScreen.new(scene, pkmn)
-        screen.pbStartScreen
-        return true
-      end
-
-      if defined?(PokemonDebugScene) && defined?(PokemonDebugScreen)
-        scene = PokemonDebugScene.new
-        screen = PokemonDebugScreen.new(scene, pkmn)
-        screen.pbStartScreen
-        return true
-      end
-
-      false
+      result = try_variants("Native Pokemon Editor", [
+        (proc { pbPokemonDebug(pkmn); true if defined?(pbPokemonDebug) }),
+        (proc { pbPokemonDebug(pkmn, nil); true if defined?(pbPokemonDebug) }),
+        (proc { pbPokemonDebug; true if defined?(pbPokemonDebug) }),
+        (proc { pbDebugPokemon(pkmn); true if defined?(pbDebugPokemon) }),
+        (proc { pbDebugPokemon(pkmn, nil); true if defined?(pbDebugPokemon) }),
+        (proc { pbDebugPokemon; true if defined?(pbDebugPokemon) }),
+        (proc { pbEditPokemon(pkmn); true if defined?(pbEditPokemon) }),
+        (proc { pbEditPokemon(pkmn, nil); true if defined?(pbEditPokemon) }),
+        (proc { pbEditPokemon; true if defined?(pbEditPokemon) }),
+        (proc { pbPokemonEditor(pkmn); true if defined?(pbPokemonEditor) }),
+        (proc { pbPokemonEditor(pkmn, nil); true if defined?(pbPokemonEditor) }),
+        (proc { pbPokemonEditor; true if defined?(pbPokemonEditor) }),
+        (proc {
+          if defined?(PokemonDebug_Scene) && defined?(PokemonDebugScreen)
+            scene = PokemonDebug_Scene.new
+            begin
+              PokemonDebugScreen.new(scene, pkmn).pbStartScreen
+            rescue ArgumentError
+              PokemonDebugScreen.new(scene).pbStartScreen
+            end
+            true
+          end
+        }),
+        (proc {
+          if defined?(PokemonDebugScene) && defined?(PokemonDebugScreen)
+            scene = PokemonDebugScene.new
+            begin
+              PokemonDebugScreen.new(scene, pkmn).pbStartScreen
+            rescue ArgumentError
+              PokemonDebugScreen.new(scene).pbStartScreen
+            end
+            true
+          end
+        })
+      ])
+      !!result
     rescue => e
       log_error("Native Pokemon Editor", e)
       false
@@ -1292,15 +1318,31 @@ module DeveloperMenu
     end
 
     def open_pc_menu
-      return pbPokeCenterPC if defined?(pbPokeCenterPC)
-      return pbPC if defined?(pbPC)
-      return pbTrainerPC if defined?(pbTrainerPC)
-      return PokemonPCList.start if defined?(PokemonPCList) && PokemonPCList.respond_to?(:start)
-      return PokemonPCList.new.start if defined?(PokemonPCList) && PokemonPCList.respond_to?(:new)
+      result = try_variants("Open PC", [
+        (proc { pbPokeCenterPC; true if defined?(pbPokeCenterPC) }),
+        (proc { pbPC; true if defined?(pbPC) }),
+        (proc { pbTrainerPC; true if defined?(pbTrainerPC) }),
+        (proc { PokemonPCList.start; true if defined?(PokemonPCList) && PokemonPCList.respond_to?(:start) }),
+        (proc {
+          if defined?(PokemonPCList) && PokemonPCList.respond_to?(:new)
+            list = PokemonPCList.new
+            if list.respond_to?(:start)
+              list.start
+              true
+            elsif list.respond_to?(:pbStartScreen)
+              list.pbStartScreen
+              true
+            end
+          end
+        })
+      ])
+      return true if result
       Kernel.pbMessage(_INTL("PC not supported on this version."))
+      false
     rescue => e
       log_error("Open PC", e)
       Kernel.pbMessage(_INTL("PC could not be opened on this version."))
+      false
     end
 
     def cancel_vehicles_if_possible
@@ -1328,7 +1370,13 @@ module DeveloperMenu
 
     def set_name_via_ui(default_name = "")
       return nil unless defined?(pbEnterPlayerName)
-      pbEnterPlayerName("Your Name?", 0, 12, default_name)
+      try_variants("Enter Player Name", [
+        proc { pbEnterPlayerName("Your Name?", 0, 12, default_name) },
+        proc { pbEnterPlayerName("Your Name?", 0, 12) },
+        proc { pbEnterPlayerName("Your Name?", default_name) },
+        proc { pbEnterPlayerName(default_name) },
+        proc { pbEnterPlayerName() }
+      ])
     rescue => e
       log_error("Enter Player Name", e)
       nil
@@ -1336,7 +1384,13 @@ module DeveloperMenu
 
     def set_pokemon_name_via_ui(pkmn)
       return nil unless defined?(pbEnterPokemonName)
-      pbEnterPokemonName("Nickname?", 0, 12, "", pkmn)
+      try_variants("Enter Pokemon Name", [
+        proc { pbEnterPokemonName("Nickname?", 0, 12, "", pkmn) },
+        proc { pbEnterPokemonName("Nickname?", 0, 12, pkmn) },
+        proc { pbEnterPokemonName("Nickname?", pkmn) },
+        proc { pbEnterPokemonName(pkmn) },
+        proc { pbEnterPokemonName() }
+      ])
     rescue => e
       log_error("Enter Pokemon Name", e)
       nil
@@ -1344,7 +1398,13 @@ module DeveloperMenu
 
     def set_owner_name_via_ui(owner_name)
       return nil unless defined?(pbEnterPlayerName)
-      pbEnterPlayerName("OT Name?", 0, 12, owner_name)
+      try_variants("Enter OT Name", [
+        proc { pbEnterPlayerName("OT Name?", 0, 12, owner_name) },
+        proc { pbEnterPlayerName("OT Name?", 0, 12) },
+        proc { pbEnterPlayerName("OT Name?", owner_name) },
+        proc { pbEnterPlayerName(owner_name) },
+        proc { pbEnterPlayerName() }
+      ])
     rescue => e
       log_error("Enter OT Name", e)
       nil
@@ -1431,6 +1491,7 @@ module DeveloperMenu
       end
       set_pokemon_hidden_ability_flags!(pkmn, target_index) unless target_index.nil?
       set_pokemon_internal_ability_fields!(pkmn, ability_symbol)
+      return pkmn.ability.to_s == ability_symbol.to_s if pkmn.respond_to?(:ability) && ability_symbol
       true
     rescue => e
       log_error("Set Ability", e)
@@ -1466,6 +1527,7 @@ module DeveloperMenu
       return false unless pkmn
       pkmn.item = item_symbol if pkmn.respond_to?(:item=)
       pkmn.setItem(item_symbol) if pkmn.respond_to?(:setItem)
+      try_call("Held Item Extra Sync") { pbHeldItem(pkmn, item_symbol) } if item_symbol && defined?(pbHeldItem)
       return pkmn.item == item_symbol if pkmn.respond_to?(:item)
       true
     rescue => e
@@ -1481,6 +1543,7 @@ module DeveloperMenu
       return false unless pkmn
       return false if nickname.nil? || nickname == ""
       pkmn.name = nickname if pkmn.respond_to?(:name=)
+      return pkmn.name.to_s == nickname.to_s if pkmn.respond_to?(:name)
       true
     rescue => e
       log_error("Set Nickname", e)
@@ -1499,9 +1562,11 @@ module DeveloperMenu
       return false if owner_name.nil? || owner_name == ""
       if pkmn.respond_to?(:owner) && pkmn.owner && pkmn.owner.respond_to?(:name=)
         pkmn.owner.name = owner_name
+        return pkmn.owner.name.to_s == owner_name.to_s if pkmn.owner.respond_to?(:name)
         return true
       end
       pkmn.ot = owner_name if pkmn.respond_to?(:ot=)
+      return pkmn.ot.to_s == owner_name.to_s if pkmn.respond_to?(:ot)
       return true if pkmn.respond_to?(:ot=)
       false
     rescue => e
@@ -2030,6 +2095,17 @@ module DeveloperMenu
       nil
     end
 
+    def move_already_known?(pkmn, move_id)
+      return false unless pkmn && move_id
+      each_move_slot(pkmn) do |move, _index|
+        return true if move_identifier(move).to_s == move_id.to_s
+      end
+      false
+    rescue => e
+      log_error("Move Already Known", e)
+      false
+    end
+
     def try_native_learn_move(pkmn, move_id)
       attempts = []
       if defined?(pbLearnMove)
@@ -2063,17 +2139,18 @@ module DeveloperMenu
 
     def teach_move_with_prompt!(pkmn, move_id)
       return false unless pkmn && move_id
+      return :already_known if move_already_known?(pkmn, move_id)
       move_count = (pkmn.respond_to?(:moves) && pkmn.moves) ? pkmn.moves.length : 0
       if move_count < 4
-        return :assigned if assign_move!(pkmn, move_count, move_id)
+        return :assigned if assign_move!(pkmn, move_count, move_id) && move_already_known?(pkmn, move_id)
         return false
       end
 
-      return :native if try_native_learn_move(pkmn, move_id)
+      return :native if try_native_learn_move(pkmn, move_id) && move_already_known?(pkmn, move_id)
 
       replace_index = choose_move_replacement_index(pkmn, move_id)
       return false if replace_index.nil?
-      return :replaced if assign_move!(pkmn, replace_index, move_id)
+      return :replaced if assign_move!(pkmn, replace_index, move_id) && move_already_known?(pkmn, move_id)
       false
     rescue => e
       log_error("Teach Move With Prompt", e)
@@ -2440,6 +2517,15 @@ module DeveloperMenu
       candidates << item.to_sym if item.respond_to?(:to_sym)
       candidates << item.to_s if item.respond_to?(:to_s)
 
+      if item.is_a?(Integer) && item > 0
+        begin
+          resolved_symbol = get_symbol(:Item, item)
+          candidates << resolved_symbol unless resolved_symbol.nil?
+        rescue => e
+          log_error("Item Integer Symbol Resolve", e)
+        end
+      end
+
       if item.is_a?(Symbol)
         pb_items = safe_const_get(Object, :PBItems)
         if pb_items && pb_items.const_defined?(item)
@@ -2453,19 +2539,186 @@ module DeveloperMenu
         end
       end
 
+      if item.is_a?(Integer) || item.is_a?(Symbol)
+        begin
+          record = data_record(:Item, item)
+          if record
+            candidates << record.id if record.respond_to?(:id)
+            candidates << record.id_number if record.respond_to?(:id_number)
+            candidates << record.real_name if record.respond_to?(:real_name)
+            candidates << record.name if record.respond_to?(:name)
+          end
+        rescue => e
+          log_error("Item Record Candidates", e)
+        end
+      end
+
       candidates.compact.uniq
     rescue => e
       log_error("Item Storage Candidates", e)
       [item].compact
     end
 
+    def item_candidates_from_cache_display(display_name)
+      candidates = []
+      return candidates if display_name.nil? || display_name.to_s.strip == ""
+
+      collection = cache_collection(:Item)
+      if collection && collection.respond_to?(:each)
+        collection.each do |key, value|
+          next unless safe_display_name(value, key).to_s == display_name.to_s
+          candidates.concat(item_storage_candidates(key))
+          candidates << value.id if value.respond_to?(:id)
+          candidates << value.id_number if value.respond_to?(:id_number)
+          candidates << value.real_name if value.respond_to?(:real_name)
+          candidates << value.name if value.respond_to?(:name)
+        end
+      end
+
+      candidates.compact.uniq
+    rescue => e
+      log_error("Item Cache Display Candidates", e)
+      []
+    end
+
+    def item_candidates_from_lookup(item_lookup, display_name = nil)
+      candidates = []
+      candidates.concat(item_storage_candidates(item_lookup))
+      candidates.concat(item_candidates_from_cache_display(display_name))
+
+      normalized_display = normalized_item_key(display_name)
+      begin
+        build_search_hash(:Item).each do |item_id, item_name|
+          next if display_name && item_name.to_s == display_name.to_s
+          next if normalized_display == "" || normalized_item_key(item_name) != normalized_display
+          candidates.concat(item_storage_candidates(item_id))
+          symbol = get_symbol(:Item, item_id)
+          candidates.concat(item_storage_candidates(symbol))
+        end
+      rescue => e
+        log_error("Item Candidates From Lookup", e)
+      end
+
+      candidates.compact.uniq
+    rescue => e
+      log_error("Item Lookup Candidates", e)
+      item_storage_candidates(item_lookup)
+    end
+
+    def set_pokemon_item_from_lookup!(pkmn, item_lookup, display_name = nil)
+      item_candidates_from_lookup(item_lookup, display_name).each do |candidate|
+        return true if set_pokemon_item!(pkmn, candidate)
+      end
+      false
+    rescue => e
+      log_error("Set Pokemon Item From Lookup", e)
+      false
+    end
+
+    def bag_store_item_from_lookup(item_lookup, qty = 1, display_name = nil)
+      candidates = item_candidates_from_lookup(item_lookup, display_name)
+      candidates.each do |candidate|
+        return true if bag_store_item(candidate, qty)
+      end
+      if defined?(pbReceiveItem)
+        candidates.each do |candidate|
+          begin
+            result = pbReceiveItem(candidate, qty)
+            return true if result == true || bag_has_item?(candidate)
+          rescue => e
+            log_error("pbReceiveItem #{candidate}", e)
+          end
+        end
+      end
+      false
+    rescue => e
+      log_error("Bag Store Item From Lookup", e)
+      false
+    end
+
+    def ability_candidates_from_lookup(ability_lookup, display_name = nil)
+      candidates = []
+      candidates << ability_lookup unless ability_lookup.nil?
+      candidates << ability_lookup.to_sym if ability_lookup.respond_to?(:to_sym)
+      candidates << ability_lookup.to_s if ability_lookup.respond_to?(:to_s)
+
+      if ability_lookup.is_a?(Integer) && ability_lookup > 0
+        begin
+          resolved_symbol = get_symbol(:Ability, ability_lookup)
+          candidates << resolved_symbol unless resolved_symbol.nil?
+        rescue => e
+          log_error("Ability Integer Symbol Resolve", e)
+        end
+      end
+
+      if display_name && display_name.to_s.strip != ""
+        normalized_display = normalized_item_key(display_name)
+        begin
+          build_search_hash(:Ability).each do |ability_id, ability_name|
+            next unless normalized_item_key(ability_name) == normalized_display
+            candidates << ability_id
+            candidates << get_symbol(:Ability, ability_id)
+          end
+        rescue => e
+          log_error("Ability Candidates From Lookup", e)
+        end
+      end
+
+      candidates.compact.uniq
+    rescue => e
+      log_error("Ability Lookup Candidates", e)
+      [ability_lookup].compact
+    end
+
+    def set_pokemon_ability_from_lookup!(pkmn, ability_lookup, display_name = nil, force_index = nil)
+      ability_candidates_from_lookup(ability_lookup, display_name).each do |candidate|
+        return true if set_pokemon_ability!(pkmn, candidate, force_index)
+      end
+      false
+    rescue => e
+      log_error("Set Pokemon Ability From Lookup", e)
+      false
+    end
+
+    def try_bag_call(method_label)
+      yield
+    rescue => e
+      log_error(method_label, e)
+      nil
+    end
+
     def bag_store_item(item, qty = 1)
       return false unless defined?($PokemonBag) && $PokemonBag
       item_storage_candidates(item).each do |candidate|
-        return true if $PokemonBag.respond_to?(:pbStoreItem) && $PokemonBag.pbStoreItem(candidate, qty)
-        return true if $PokemonBag.respond_to?(:pbStoreItem) && $PokemonBag.pbStoreItem(candidate)
-        return true if $PokemonBag.respond_to?(:storeItem) && $PokemonBag.storeItem(candidate, qty)
-        return true if $PokemonBag.respond_to?(:add) && $PokemonBag.add(candidate, qty)
+        before_has_item = bag_has_item?(candidate)
+
+        if $PokemonBag.respond_to?(:pbStoreItem)
+          result = try_bag_call("Bag pbStoreItem #{candidate}") do
+            begin
+              $PokemonBag.pbStoreItem(candidate, qty)
+            rescue ArgumentError
+              $PokemonBag.pbStoreItem(candidate)
+            end
+          end
+          return true if result == true
+          return true if bag_has_item?(candidate) && (!before_has_item || qty.to_i > 0)
+        end
+
+        if $PokemonBag.respond_to?(:storeItem)
+          result = try_bag_call("Bag storeItem #{candidate}") do
+            $PokemonBag.storeItem(candidate, qty)
+          end
+          return true if result == true
+          return true if bag_has_item?(candidate) && (!before_has_item || qty.to_i > 0)
+        end
+
+        if $PokemonBag.respond_to?(:add)
+          result = try_bag_call("Bag add #{candidate}") do
+            $PokemonBag.add(candidate, qty)
+          end
+          return true if result == true
+          return true if bag_has_item?(candidate) && (!before_has_item || qty.to_i > 0)
+        end
       end
       false
     rescue => e
@@ -2476,10 +2729,35 @@ module DeveloperMenu
     def bag_delete_item(item, qty = 1)
       return false unless defined?($PokemonBag) && $PokemonBag
       item_storage_candidates(item).each do |candidate|
-        return true if $PokemonBag.respond_to?(:pbDeleteItem) && $PokemonBag.pbDeleteItem(candidate, qty)
-        return true if $PokemonBag.respond_to?(:pbDeleteItem) && $PokemonBag.pbDeleteItem(candidate)
-        return true if $PokemonBag.respond_to?(:deleteItem) && $PokemonBag.deleteItem(candidate, qty)
-        return true if $PokemonBag.respond_to?(:remove) && $PokemonBag.remove(candidate, qty)
+        before_has_item = bag_has_item?(candidate)
+
+        if $PokemonBag.respond_to?(:pbDeleteItem)
+          result = try_bag_call("Bag pbDeleteItem #{candidate}") do
+            begin
+              $PokemonBag.pbDeleteItem(candidate, qty)
+            rescue ArgumentError
+              $PokemonBag.pbDeleteItem(candidate)
+            end
+          end
+          return true if result == true
+          return true if before_has_item && !bag_has_item?(candidate)
+        end
+
+        if $PokemonBag.respond_to?(:deleteItem)
+          result = try_bag_call("Bag deleteItem #{candidate}") do
+            $PokemonBag.deleteItem(candidate, qty)
+          end
+          return true if result == true
+          return true if before_has_item && !bag_has_item?(candidate)
+        end
+
+        if $PokemonBag.respond_to?(:remove)
+          result = try_bag_call("Bag remove #{candidate}") do
+            $PokemonBag.remove(candidate, qty)
+          end
+          return true if result == true
+          return true if before_has_item && !bag_has_item?(candidate)
+        end
       end
       false
     rescue => e
@@ -2954,7 +3232,13 @@ module DeveloperMenu
     def current_map_events
       return [] unless defined?($game_map) && $game_map && $game_map.respond_to?(:events) && $game_map.events
       events = $game_map.events
-      list = events.respond_to?(:values) ? events.values : events
+      list = if events.respond_to?(:values)
+        events.values
+      elsif events.respond_to?(:to_a)
+        events.to_a
+      else
+        events
+      end
       Array(list).compact.sort_by { |event| event.id rescue 0 }
     rescue => e
       log_error("Current Map Events", e)
@@ -2986,9 +3270,21 @@ module DeveloperMenu
       x = event.respond_to?(:x) ? event.x : nil
       y = event.respond_to?(:y) ? event.y : nil
       return false if x.nil? || y.nil?
-      $game_player.moveto(x, y) if $game_player.respond_to?(:moveto)
+      moved = false
+      if $game_player.respond_to?(:moveto)
+        $game_player.moveto(x, y)
+        moved = true
+      elsif $game_player.respond_to?(:moveto2)
+        $game_player.moveto2(x, y)
+        moved = true
+      elsif $game_player.respond_to?(:x=) && $game_player.respond_to?(:y=)
+        $game_player.x = x
+        $game_player.y = y
+        moved = true
+      end
       $game_player.center(x, y) if $game_player.respond_to?(:center)
-      true
+      $game_player.turn_down if $game_player.respond_to?(:turn_down)
+      moved
     rescue => e
       log_error("Teleport To Event", e)
       false
@@ -2996,8 +3292,16 @@ module DeveloperMenu
 
     def refresh_event(event)
       return false unless event
-      event.refresh if event.respond_to?(:refresh)
-      true
+      refreshed = false
+      if event.respond_to?(:refresh)
+        event.refresh
+        refreshed = true
+      end
+      if event.respond_to?(:update)
+        event.update
+        refreshed = true
+      end
+      refreshed
     rescue => e
       log_error("Refresh Event", e)
       false
@@ -3058,6 +3362,7 @@ module DeveloperMenu
 
     def on_input_update
       return if @processing_hotkey
+      return if plugin_message_window_busy?
       @processing_hotkey = true
       begin
         safe_execute("Input Update") do
@@ -3083,6 +3388,10 @@ module DeveloperMenu
       ensure_runtime_patches!
       if @walk_through_walls && $game_player
         $game_player.through = true
+      end
+      if defined?(@pending_map_refresh) && @pending_map_refresh
+        mark_map_for_refresh!
+        @pending_map_refresh = false
       end
     end
 
@@ -3972,13 +4281,16 @@ module DeveloperMenu
       item_id = search_list("Items", hash)
       return if !item_id || item_id <= 0
       itm_sym = get_symbol(:Item, item_id)
+      item_name = hash[item_id]
       params = ChooseNumberParams.new
       params.setRange(1, 999); params.setInitialValue(1)
       qty = Kernel.pbMessageChooseNumber(_INTL("Amount:"), params)
-      if bag_store_item(itm_sym, qty)
+      if bag_store_item_from_lookup(itm_sym || item_id, qty, item_name)
         Kernel.pbMessage(_INTL("Added {1} x{2}.", item_display_name(itm_sym), qty))
       else
-        Kernel.pbMessage(_INTL("Could not add {1} on this engine.", item_display_name(itm_sym)))
+        fallback_name = item_name && item_name != "" ? item_name : item_display_name(itm_sym)
+        log_item_debug("item_add_failed item_id=#{item_id.inspect} itm_sym=#{itm_sym.inspect} item_name=#{item_name.inspect} qty=#{qty}")
+        Kernel.pbMessage(_INTL("Could not add {1} on this engine.", fallback_name))
       end
     end
 
@@ -3990,6 +4302,8 @@ module DeveloperMenu
       
       Kernel.pbMessage(_INTL("Adding... This may take a while."))
       hash = build_search_hash(:Item)
+      added_count = 0
+      failed_count = 0
       hash.each do |k, v|
         sym = get_symbol(:Item, k)
         is_key = false
@@ -4017,18 +4331,30 @@ module DeveloperMenu
         
         next if mode == 1 && is_key
         next if mode == 2 && !is_key
-        bag_store_item(sym, qty)
+        if bag_store_item_from_lookup(sym || k, qty, v)
+          added_count += 1
+        else
+          failed_count += 1
+        end
       end
-      Kernel.pbMessage(_INTL("Bag Filled!"))
+      if added_count > 0
+        Kernel.pbMessage(_INTL("Bag fill finished. Added {1} items. Failed: {2}.", added_count, failed_count))
+      else
+        Kernel.pbMessage(_INTL("Could not fill the bag on this engine."))
+      end
     end
 
     def item_empty
       return unless Kernel.pbConfirmMessage(_INTL("Empty Bag?"))
+      cleared = false
       if $PokemonBag.respond_to?(:clear)
         $PokemonBag.clear
+        cleared = true
       elsif $PokemonBag.respond_to?(:Clear)
         $PokemonBag.Clear
+        cleared = true
       end
+      Kernel.pbMessage(_INTL(cleared ? "Bag emptied!" : "Could not empty the bag on this engine."))
     end
 
     def menu_player
@@ -4364,11 +4690,21 @@ module DeveloperMenu
       menu = [
         { :label => "Edit Level", :action => proc { 
           params = ChooseNumberParams.new; params.setRange(1, 100); params.setInitialValue(pkmn.level)
-          set_pokemon_level!(pkmn, Kernel.pbMessageChooseNumber(_INTL("Level:"), params))
+          new_level = Kernel.pbMessageChooseNumber(_INTL("Level:"), params)
+          if set_pokemon_level!(pkmn, new_level)
+            Kernel.pbMessage(_INTL("Level set to {1}.", new_level))
+          else
+            Kernel.pbMessage(_INTL("Could not edit level on this engine."))
+          end
         }},
         { :label => "Edit Experience", :action => proc { 
           params = ChooseNumberParams.new; params.setRange(0, 9999999); params.setInitialValue(pkmn.exp)
-          set_pokemon_exp!(pkmn, Kernel.pbMessageChooseNumber(_INTL("Exp:"), params))
+          new_exp = Kernel.pbMessageChooseNumber(_INTL("Exp:"), params)
+          if set_pokemon_exp!(pkmn, new_exp)
+            Kernel.pbMessage(_INTL("Experience set to {1}.", new_exp))
+          else
+            Kernel.pbMessage(_INTL("Could not edit experience on this engine."))
+          end
         }},
         { :label => "Advanced Stat Editor", :action => proc {
           party_advanced_stat_editor(pkmn)
@@ -4453,6 +4789,12 @@ module DeveloperMenu
             result = teach_move_with_prompt!(pkmn, sym)
             if result && result != :native
               Kernel.pbMessage(_INTL("{1} learned {2}!", pkmn.name, move_display_name(sym)))
+            elsif result == :native
+              Kernel.pbMessage(_INTL("{1} learned {2}!", pkmn.name, move_display_name(sym)))
+            elsif result == :already_known
+              Kernel.pbMessage(_INTL("{1} already knows {2}.", pkmn.name, move_display_name(sym)))
+            else
+              Kernel.pbMessage(_INTL("Could not teach {1} on this engine.", move_display_name(sym)))
             end
           end
         }},
@@ -4467,6 +4809,8 @@ module DeveloperMenu
               forgotten_name = pkmn.moves[ch].name rescue _INTL("that move")
               if forget_move!(pkmn, ch)
                 Kernel.pbMessage(_INTL("{1} forgot {2}!", pkmn.name, forgotten_name))
+              else
+                Kernel.pbMessage(_INTL("Could not forget that move on this engine."))
               end
             end
           end
@@ -4513,7 +4857,8 @@ module DeveloperMenu
           item_id = search_list("Items", hash)
           if item_id
             sym = get_symbol(:Item, item_id)
-            if set_pokemon_item!(pkmn, sym)
+            item_name = hash[item_id]
+            if set_pokemon_item_from_lookup!(pkmn, sym || item_id, item_name)
               Kernel.pbMessage(_INTL("Held item set to {1}.", item_display_name(sym)))
             else
               Kernel.pbMessage(_INTL("Could not set held item on this engine."))
@@ -4549,7 +4894,8 @@ module DeveloperMenu
           id = search_list("Abilities", hash)
           if id
             sym = get_symbol(:Ability, id)
-            if set_pokemon_ability!(pkmn, sym, 2)
+            ability_name = hash[id]
+            if set_pokemon_ability_from_lookup!(pkmn, sym || id, ability_name, 2)
               Kernel.pbMessage(_INTL("Ability set to {1}.", ability_display_name(sym)))
             else
               Kernel.pbMessage(_INTL("Could not set ability on this engine."))
@@ -4803,6 +5149,15 @@ if !$_gm_input_patched
       class << Graphics
         def update
           _gm_original_graphics_update
+          current_frame = begin
+            Graphics.frame_count
+          rescue
+            nil
+          end
+          if defined?($_gm_last_update_frame) && !current_frame.nil? && $_gm_last_update_frame == current_frame
+            return
+          end
+          $_gm_last_update_frame = current_frame
           begin
             ::DeveloperMenu.on_input_update
           rescue Exception => e
@@ -4825,13 +5180,60 @@ end
 # ===============================================================================
 
 class << ::DeveloperMenu
+  def clamp_argument_error?(error)
+    return false if error.nil?
+    error.is_a?(ArgumentError) && error.message.to_s.downcase.include?("min argument must be smaller than max argument")
+  rescue
+    false
+  end
+
   def apply_runtime_patches!
+    return true if defined?(@runtime_patches_applied) && @runtime_patches_applied
+    apply_clamp_compatibility_patch!
     apply_no_battles_patches!
     apply_ev_gain_patches!
     apply_infinite_mega_patches!
+    @runtime_patches_applied = true
     true
   rescue => e
     log_error("Apply Runtime Patches", e)
+    false
+  end
+
+  def apply_clamp_compatibility_patch!
+    return true if defined?($_gm_clamp_patch_applied) && $_gm_clamp_patch_applied
+    Comparable.module_eval do
+      unless method_defined?(:_gm_orig_clamp_dev)
+        alias_method :_gm_orig_clamp_dev, :clamp
+      end
+
+      def clamp(*args)
+        _gm_orig_clamp_dev(*args)
+      rescue ArgumentError => e
+        if args.length == 2
+          min_value = args[0]
+          max_value = args[1]
+          if !min_value.nil? && !max_value.nil? && min_value.respond_to?(:>) && min_value > max_value
+            return _gm_orig_clamp_dev(max_value, min_value)
+          end
+        elsif args.length == 1 && args[0].is_a?(Range)
+          range = args[0]
+          min_value = range.begin
+          max_value = range.end
+          if !min_value.nil? && !max_value.nil? && min_value.respond_to?(:>) && min_value > max_value
+            swapped = range.exclude_end? ? (max_value...min_value) : (max_value..min_value)
+            return _gm_orig_clamp_dev(swapped)
+          end
+        end
+        raise e
+      end
+
+      ruby2_keywords(:clamp) if respond_to?(:ruby2_keywords, true)
+    end
+    $_gm_clamp_patch_applied = true
+    true
+  rescue => e
+    log_error("Apply Clamp Compatibility Patch", e)
     false
   end
 
@@ -4892,16 +5294,24 @@ class << ::DeveloperMenu
           return _gm_orig_pbGainEVsOne_dev(*args) if defined?(_gm_orig_pbGainEVsOne_dev)
           nil
         rescue ArgumentError => e
+          return nil if ::DeveloperMenu.clamp_argument_error?(e)
           ::DeveloperMenu.log_error("Battle EV Gain Compatibility", e)
           nil
+        rescue StandardError => e
+          return nil if ::DeveloperMenu.clamp_argument_error?(e)
+          raise e
         end
 
         def pbGainExp(*args)
           return _gm_orig_pbGainExp_dev(*args) if defined?(_gm_orig_pbGainExp_dev)
           nil
         rescue ArgumentError => e
+          return nil if ::DeveloperMenu.clamp_argument_error?(e)
           ::DeveloperMenu.log_error("Battle Exp Gain Compatibility", e)
           nil
+        rescue StandardError => e
+          return nil if ::DeveloperMenu.clamp_argument_error?(e)
+          raise e
         end
 
         ruby2_keywords(:pbGainEVsOne) if respond_to?(:ruby2_keywords, true)
@@ -4921,16 +5331,24 @@ class << ::DeveloperMenu
           return _gm_orig_pbGainEVsOne_dev(*args) if defined?(_gm_orig_pbGainEVsOne_dev)
           nil
         rescue ArgumentError => e
+          return nil if ::DeveloperMenu.clamp_argument_error?(e)
           ::DeveloperMenu.log_error("Legacy Battle EV Gain Compatibility", e)
           nil
+        rescue StandardError => e
+          return nil if ::DeveloperMenu.clamp_argument_error?(e)
+          raise e
         end
 
         def pbGainExp(*args)
           return _gm_orig_pbGainExp_dev(*args) if defined?(_gm_orig_pbGainExp_dev)
           nil
         rescue ArgumentError => e
+          return nil if ::DeveloperMenu.clamp_argument_error?(e)
           ::DeveloperMenu.log_error("Legacy Battle Exp Compatibility", e)
           nil
+        rescue StandardError => e
+          return nil if ::DeveloperMenu.clamp_argument_error?(e)
+          raise e
         end
       end
     end

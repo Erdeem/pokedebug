@@ -7,6 +7,15 @@ if !$_gm_input_patched
       class << Graphics
         def update
           _gm_original_graphics_update
+          current_frame = begin
+            Graphics.frame_count
+          rescue
+            nil
+          end
+          if defined?($_gm_last_update_frame) && !current_frame.nil? && $_gm_last_update_frame == current_frame
+            return
+          end
+          $_gm_last_update_frame = current_frame
           begin
             ::DeveloperMenu.on_input_update
           rescue Exception => e
@@ -29,13 +38,60 @@ end
 # ===============================================================================
 
 class << ::DeveloperMenu
+  def clamp_argument_error?(error)
+    return false if error.nil?
+    error.is_a?(ArgumentError) && error.message.to_s.downcase.include?("min argument must be smaller than max argument")
+  rescue
+    false
+  end
+
   def apply_runtime_patches!
+    return true if defined?(@runtime_patches_applied) && @runtime_patches_applied
+    apply_clamp_compatibility_patch!
     apply_no_battles_patches!
     apply_ev_gain_patches!
     apply_infinite_mega_patches!
+    @runtime_patches_applied = true
     true
   rescue => e
     log_error("Apply Runtime Patches", e)
+    false
+  end
+
+  def apply_clamp_compatibility_patch!
+    return true if defined?($_gm_clamp_patch_applied) && $_gm_clamp_patch_applied
+    Comparable.module_eval do
+      unless method_defined?(:_gm_orig_clamp_dev)
+        alias_method :_gm_orig_clamp_dev, :clamp
+      end
+
+      def clamp(*args)
+        _gm_orig_clamp_dev(*args)
+      rescue ArgumentError => e
+        if args.length == 2
+          min_value = args[0]
+          max_value = args[1]
+          if !min_value.nil? && !max_value.nil? && min_value.respond_to?(:>) && min_value > max_value
+            return _gm_orig_clamp_dev(max_value, min_value)
+          end
+        elsif args.length == 1 && args[0].is_a?(Range)
+          range = args[0]
+          min_value = range.begin
+          max_value = range.end
+          if !min_value.nil? && !max_value.nil? && min_value.respond_to?(:>) && min_value > max_value
+            swapped = range.exclude_end? ? (max_value...min_value) : (max_value..min_value)
+            return _gm_orig_clamp_dev(swapped)
+          end
+        end
+        raise e
+      end
+
+      ruby2_keywords(:clamp) if respond_to?(:ruby2_keywords, true)
+    end
+    $_gm_clamp_patch_applied = true
+    true
+  rescue => e
+    log_error("Apply Clamp Compatibility Patch", e)
     false
   end
 
@@ -96,16 +152,24 @@ class << ::DeveloperMenu
           return _gm_orig_pbGainEVsOne_dev(*args) if defined?(_gm_orig_pbGainEVsOne_dev)
           nil
         rescue ArgumentError => e
+          return nil if ::DeveloperMenu.clamp_argument_error?(e)
           ::DeveloperMenu.log_error("Battle EV Gain Compatibility", e)
           nil
+        rescue StandardError => e
+          return nil if ::DeveloperMenu.clamp_argument_error?(e)
+          raise e
         end
 
         def pbGainExp(*args)
           return _gm_orig_pbGainExp_dev(*args) if defined?(_gm_orig_pbGainExp_dev)
           nil
         rescue ArgumentError => e
+          return nil if ::DeveloperMenu.clamp_argument_error?(e)
           ::DeveloperMenu.log_error("Battle Exp Gain Compatibility", e)
           nil
+        rescue StandardError => e
+          return nil if ::DeveloperMenu.clamp_argument_error?(e)
+          raise e
         end
 
         ruby2_keywords(:pbGainEVsOne) if respond_to?(:ruby2_keywords, true)
@@ -125,16 +189,24 @@ class << ::DeveloperMenu
           return _gm_orig_pbGainEVsOne_dev(*args) if defined?(_gm_orig_pbGainEVsOne_dev)
           nil
         rescue ArgumentError => e
+          return nil if ::DeveloperMenu.clamp_argument_error?(e)
           ::DeveloperMenu.log_error("Legacy Battle EV Gain Compatibility", e)
           nil
+        rescue StandardError => e
+          return nil if ::DeveloperMenu.clamp_argument_error?(e)
+          raise e
         end
 
         def pbGainExp(*args)
           return _gm_orig_pbGainExp_dev(*args) if defined?(_gm_orig_pbGainExp_dev)
           nil
         rescue ArgumentError => e
+          return nil if ::DeveloperMenu.clamp_argument_error?(e)
           ::DeveloperMenu.log_error("Legacy Battle Exp Compatibility", e)
           nil
+        rescue StandardError => e
+          return nil if ::DeveloperMenu.clamp_argument_error?(e)
+          raise e
         end
       end
     end

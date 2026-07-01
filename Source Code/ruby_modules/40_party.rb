@@ -114,11 +114,21 @@
       menu = [
         { :label => "Edit Level", :action => proc { 
           params = ChooseNumberParams.new; params.setRange(1, 100); params.setInitialValue(pkmn.level)
-          set_pokemon_level!(pkmn, Kernel.pbMessageChooseNumber(_INTL("Level:"), params))
+          new_level = Kernel.pbMessageChooseNumber(_INTL("Level:"), params)
+          if set_pokemon_level!(pkmn, new_level)
+            Kernel.pbMessage(_INTL("Level set to {1}.", new_level))
+          else
+            Kernel.pbMessage(_INTL("Could not edit level on this engine."))
+          end
         }},
         { :label => "Edit Experience", :action => proc { 
           params = ChooseNumberParams.new; params.setRange(0, 9999999); params.setInitialValue(pkmn.exp)
-          set_pokemon_exp!(pkmn, Kernel.pbMessageChooseNumber(_INTL("Exp:"), params))
+          new_exp = Kernel.pbMessageChooseNumber(_INTL("Exp:"), params)
+          if set_pokemon_exp!(pkmn, new_exp)
+            Kernel.pbMessage(_INTL("Experience set to {1}.", new_exp))
+          else
+            Kernel.pbMessage(_INTL("Could not edit experience on this engine."))
+          end
         }},
         { :label => "Advanced Stat Editor", :action => proc {
           party_advanced_stat_editor(pkmn)
@@ -203,6 +213,12 @@
             result = teach_move_with_prompt!(pkmn, sym)
             if result && result != :native
               Kernel.pbMessage(_INTL("{1} learned {2}!", pkmn.name, move_display_name(sym)))
+            elsif result == :native
+              Kernel.pbMessage(_INTL("{1} learned {2}!", pkmn.name, move_display_name(sym)))
+            elsif result == :already_known
+              Kernel.pbMessage(_INTL("{1} already knows {2}.", pkmn.name, move_display_name(sym)))
+            else
+              Kernel.pbMessage(_INTL("Could not teach {1} on this engine.", move_display_name(sym)))
             end
           end
         }},
@@ -217,6 +233,8 @@
               forgotten_name = pkmn.moves[ch].name rescue _INTL("that move")
               if forget_move!(pkmn, ch)
                 Kernel.pbMessage(_INTL("{1} forgot {2}!", pkmn.name, forgotten_name))
+              else
+                Kernel.pbMessage(_INTL("Could not forget that move on this engine."))
               end
             end
           end
@@ -263,7 +281,8 @@
           item_id = search_list("Items", hash)
           if item_id
             sym = get_symbol(:Item, item_id)
-            if set_pokemon_item!(pkmn, sym)
+            item_name = hash[item_id]
+            if set_pokemon_item_from_lookup!(pkmn, sym || item_id, item_name)
               Kernel.pbMessage(_INTL("Held item set to {1}.", item_display_name(sym)))
             else
               Kernel.pbMessage(_INTL("Could not set held item on this engine."))
@@ -299,7 +318,8 @@
           id = search_list("Abilities", hash)
           if id
             sym = get_symbol(:Ability, id)
-            if set_pokemon_ability!(pkmn, sym, 2)
+            ability_name = hash[id]
+            if set_pokemon_ability_from_lookup!(pkmn, sym || id, ability_name, 2)
               Kernel.pbMessage(_INTL("Ability set to {1}.", ability_display_name(sym)))
             else
               Kernel.pbMessage(_INTL("Could not set ability on this engine."))

@@ -214,13 +214,16 @@
       item_id = search_list("Items", hash)
       return if !item_id || item_id <= 0
       itm_sym = get_symbol(:Item, item_id)
+      item_name = hash[item_id]
       params = ChooseNumberParams.new
       params.setRange(1, 999); params.setInitialValue(1)
       qty = Kernel.pbMessageChooseNumber(_INTL("Amount:"), params)
-      if bag_store_item(itm_sym, qty)
+      if bag_store_item_from_lookup(itm_sym || item_id, qty, item_name)
         Kernel.pbMessage(_INTL("Added {1} x{2}.", item_display_name(itm_sym), qty))
       else
-        Kernel.pbMessage(_INTL("Could not add {1} on this engine.", item_display_name(itm_sym)))
+        fallback_name = item_name && item_name != "" ? item_name : item_display_name(itm_sym)
+        log_item_debug("item_add_failed item_id=#{item_id.inspect} itm_sym=#{itm_sym.inspect} item_name=#{item_name.inspect} qty=#{qty}")
+        Kernel.pbMessage(_INTL("Could not add {1} on this engine.", fallback_name))
       end
     end
 
@@ -232,6 +235,8 @@
       
       Kernel.pbMessage(_INTL("Adding... This may take a while."))
       hash = build_search_hash(:Item)
+      added_count = 0
+      failed_count = 0
       hash.each do |k, v|
         sym = get_symbol(:Item, k)
         is_key = false
@@ -259,18 +264,30 @@
         
         next if mode == 1 && is_key
         next if mode == 2 && !is_key
-        bag_store_item(sym, qty)
+        if bag_store_item_from_lookup(sym || k, qty, v)
+          added_count += 1
+        else
+          failed_count += 1
+        end
       end
-      Kernel.pbMessage(_INTL("Bag Filled!"))
+      if added_count > 0
+        Kernel.pbMessage(_INTL("Bag fill finished. Added {1} items. Failed: {2}.", added_count, failed_count))
+      else
+        Kernel.pbMessage(_INTL("Could not fill the bag on this engine."))
+      end
     end
 
     def item_empty
       return unless Kernel.pbConfirmMessage(_INTL("Empty Bag?"))
+      cleared = false
       if $PokemonBag.respond_to?(:clear)
         $PokemonBag.clear
+        cleared = true
       elsif $PokemonBag.respond_to?(:Clear)
         $PokemonBag.Clear
+        cleared = true
       end
+      Kernel.pbMessage(_INTL(cleared ? "Bag emptied!" : "Could not empty the bag on this engine."))
     end
 
     def menu_player
