@@ -4,6 +4,37 @@ GM_TRY_DISABLE_COMPILER = false unless defined?(GM_TRY_DISABLE_COMPILER)
 module PokeDebugBootstrap
   module_function
 
+  def module_has_method?(owner, method_name)
+    return false unless owner
+    public_methods = owner.instance_methods rescue []
+    private_methods = owner.private_instance_methods rescue []
+    protected_methods = owner.protected_instance_methods rescue []
+    method_text = method_name.to_s
+    [public_methods, private_methods, protected_methods].each do |list|
+      list.each do |entry|
+        return true if entry.to_s == method_text
+      end
+    end
+    false
+  rescue Exception
+    false
+  end
+
+  def singleton_class_for(object)
+    class << object
+      self
+    end
+  rescue Exception
+    nil
+  end
+
+  def read_text_file(path)
+    File.open(path, "rb") { |file| file.read }
+  rescue Exception => e
+    log_message("Bootstrap", "Failed to read #{path}: #{e.message}")
+    nil
+  end
+
   def log_message(label, message)
     File.open("developer_menu_errors.log", "a") do |f|
       f.puts("[#{Time.now}] #{label}: #{message}")
@@ -67,8 +98,10 @@ module PokeDebugBootstrap
     return unless receiver.respond_to?(method_name)
     aliased_name = :"_gm_original_#{method_name}"
     return if receiver.respond_to?(aliased_name)
-    receiver.singleton_class.send(:alias_method, aliased_name, method_name)
-    receiver.singleton_class.send(:define_method, method_name) do |*args, &block|
+    eigenclass = singleton_class_for(receiver)
+    return unless eigenclass
+    eigenclass.send(:alias_method, aliased_name, method_name)
+    eigenclass.send(:define_method, method_name) do |*args, &block|
       PokeDebugBootstrap.log_message("Compiler Patch", "Skipped #{receiver}.#{method_name}")
       false
     end
@@ -79,16 +112,15 @@ module PokeDebugBootstrap
   def patch_object_compile_methods!
     methods = [:pbCompileAllData, :pbCompileAllDataIfNecessary, :mainFunctionDebug]
     methods.each do |method_name|
-      next unless Object.private_method_defined?(method_name) || Object.method_defined?(method_name)
+      next unless module_has_method?(Object, method_name)
       aliased_name = :"_gm_original_#{method_name}"
-      next if Object.private_method_defined?(aliased_name) || Object.method_defined?(aliased_name)
+      next if module_has_method?(Object, aliased_name)
       Object.class_eval do
         alias_method aliased_name, method_name
         define_method(method_name) do |*args, &block|
           PokeDebugBootstrap.log_message("Compiler Patch", "Skipped Object##{method_name}")
           false
         end
-        private method_name if private_method_defined?(aliased_name)
       end
     end
   rescue Exception => e
@@ -134,7 +166,8 @@ begin
   PokeDebugBootstrap.activate_native_debug!
   PokeDebugBootstrap.defer_compiler_patch!
   plugin_path = File.expand_path("Plugins/God Mode/god_mode.rb", Dir.pwd)
-  eval(File.binread(plugin_path), binding, plugin_path)
+  plugin_code = PokeDebugBootstrap.read_text_file(plugin_path)
+  eval(plugin_code, binding, plugin_path) if plugin_code
 rescue Exception => e
   File.open("developer_menu_errors.log", "a") do |f|
     f.puts("[#{Time.now}] Startup Error:")

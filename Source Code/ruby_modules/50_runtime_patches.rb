@@ -45,10 +45,12 @@ end
 if defined?(WildBattle) && WildBattle.respond_to?(:start)
   if DeveloperMenu.make_singleton_alias(WildBattle, :_gm_orig_start_dev, :start)
     class << WildBattle
-      def start(*args, **kwargs)
+      def start(*args)
         return 1 if DeveloperMenu.no_battles
-        _gm_orig_start_dev(*args, **kwargs)
+        _gm_orig_start_dev(*args)
       end
+
+      ruby2_keywords(:start) if respond_to?(:ruby2_keywords, true)
     end
   end
 end
@@ -56,10 +58,12 @@ end
 if defined?(TrainerBattle) && TrainerBattle.respond_to?(:start)
   if DeveloperMenu.make_singleton_alias(TrainerBattle, :_gm_orig_start_dev, :start)
     class << TrainerBattle
-      def start(*args, **kwargs)
+      def start(*args)
         return 1 if DeveloperMenu.no_battles
-        _gm_orig_start_dev(*args, **kwargs)
+        _gm_orig_start_dev(*args)
       end
+
+      ruby2_keywords(:start) if respond_to?(:ruby2_keywords, true)
     end
   end
 end
@@ -71,13 +75,15 @@ end
 if defined?(Battle)
   DeveloperMenu.make_alias(:_gm_orig_pbGainEVsOne_dev, :pbGainEVsOne, Battle)
   Battle.class_eval do
-    def pbGainEVsOne(*args, **kwargs)
-      return _gm_orig_pbGainEVsOne_dev(*args, **kwargs) if defined?(_gm_orig_pbGainEVsOne_dev)
+    def pbGainEVsOne(*args)
+      return _gm_orig_pbGainEVsOne_dev(*args) if defined?(_gm_orig_pbGainEVsOne_dev)
       nil
     rescue ArgumentError => e
       DeveloperMenu.log_error("Battle EV Gain Compatibility", e)
       nil
     end
+
+    ruby2_keywords(:pbGainEVsOne) if respond_to?(:ruby2_keywords, true)
   end
 end
 

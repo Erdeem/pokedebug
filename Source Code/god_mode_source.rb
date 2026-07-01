@@ -248,6 +248,28 @@ module DeveloperMenu
       false
     end
 
+    def module_has_method?(owner, method_name)
+      return false unless owner
+      method_text = method_name.to_s
+      [owner.instance_methods, owner.private_instance_methods, owner.protected_instance_methods].each do |list|
+        next unless list
+        list.each do |entry|
+          return true if entry.to_s == method_text
+        end
+      end
+      false
+    rescue
+      false
+    end
+
+    def safe_singleton_class(object)
+      class << object
+        self
+      end
+    rescue
+      nil
+    end
+
     def recalc_pokemon_stats(pkmn)
       pkmn.calc_stats if safe_respond_to?(pkmn, :calc_stats)
       pkmn.calcStats if safe_respond_to?(pkmn, :calcStats)
@@ -257,8 +279,8 @@ module DeveloperMenu
 
     def make_alias(alias_name, target_name, owner)
       return false unless owner
-      return false unless owner.method_defined?(target_name) || owner.private_method_defined?(target_name)
-      return false if owner.method_defined?(alias_name) || owner.private_method_defined?(alias_name)
+      return false unless module_has_method?(owner, target_name)
+      return false if module_has_method?(owner, alias_name)
       owner.send(:alias_method, alias_name, target_name)
       true
     rescue => e
@@ -268,9 +290,10 @@ module DeveloperMenu
 
     def make_singleton_alias(object, alias_name, target_name)
       return false unless object
-      eigenclass = class << object; self; end
-      return false unless eigenclass.method_defined?(target_name) || eigenclass.private_method_defined?(target_name)
-      return false if eigenclass.method_defined?(alias_name) || eigenclass.private_method_defined?(alias_name)
+      eigenclass = safe_singleton_class(object)
+      return false unless eigenclass
+      return false unless module_has_method?(eigenclass, target_name)
+      return false if module_has_method?(eigenclass, alias_name)
       eigenclass.send(:alias_method, alias_name, target_name)
       true
     rescue => e
@@ -3711,10 +3734,12 @@ end
 if defined?(WildBattle) && WildBattle.respond_to?(:start)
   if DeveloperMenu.make_singleton_alias(WildBattle, :_gm_orig_start_dev, :start)
     class << WildBattle
-      def start(*args, **kwargs)
+      def start(*args)
         return 1 if DeveloperMenu.no_battles
-        _gm_orig_start_dev(*args, **kwargs)
+        _gm_orig_start_dev(*args)
       end
+
+      ruby2_keywords(:start) if respond_to?(:ruby2_keywords, true)
     end
   end
 end
@@ -3722,10 +3747,12 @@ end
 if defined?(TrainerBattle) && TrainerBattle.respond_to?(:start)
   if DeveloperMenu.make_singleton_alias(TrainerBattle, :_gm_orig_start_dev, :start)
     class << TrainerBattle
-      def start(*args, **kwargs)
+      def start(*args)
         return 1 if DeveloperMenu.no_battles
-        _gm_orig_start_dev(*args, **kwargs)
+        _gm_orig_start_dev(*args)
       end
+
+      ruby2_keywords(:start) if respond_to?(:ruby2_keywords, true)
     end
   end
 end
@@ -3737,13 +3764,15 @@ end
 if defined?(Battle)
   DeveloperMenu.make_alias(:_gm_orig_pbGainEVsOne_dev, :pbGainEVsOne, Battle)
   Battle.class_eval do
-    def pbGainEVsOne(*args, **kwargs)
-      return _gm_orig_pbGainEVsOne_dev(*args, **kwargs) if defined?(_gm_orig_pbGainEVsOne_dev)
+    def pbGainEVsOne(*args)
+      return _gm_orig_pbGainEVsOne_dev(*args) if defined?(_gm_orig_pbGainEVsOne_dev)
       nil
     rescue ArgumentError => e
       DeveloperMenu.log_error("Battle EV Gain Compatibility", e)
       nil
     end
+
+    ruby2_keywords(:pbGainEVsOne) if respond_to?(:ruby2_keywords, true)
   end
 end
 

@@ -105,6 +105,31 @@ function Get-PackedExeCandidate {
         Select-Object -First 1
 }
 
+function Get-GameIniPath {
+    param([string]$ResolvedGameDir)
+    $defaultIni = Join-Path $ResolvedGameDir "Game.ini"
+    if (Test-Path $defaultIni -PathType Leaf) {
+        return $defaultIni
+    }
+
+    $exe = Get-PackedExeCandidate $ResolvedGameDir
+    if ($exe) {
+        $candidate = Join-Path $ResolvedGameDir (($exe.BaseName) + ".ini")
+        if (Test-Path $candidate -PathType Leaf) {
+            return $candidate
+        }
+    }
+
+    $fallback = Get-ChildItem -Path $ResolvedGameDir -Filter "*.ini" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+    if ($fallback) {
+        return $fallback.FullName
+    }
+
+    return $defaultIni
+}
+
 function Test-EnigmaPackedGame {
     param([string]$ResolvedGameDir)
     $result = [ordered]@{
@@ -377,7 +402,7 @@ function Run-Uninstall([string]$ResolvedGameDir) {
     $preloadPath = Join-Path $ResolvedGameDir "preload_gm.rb"
     $mkxpPath = Join-Path $ResolvedGameDir "mkxp.json"
     $rxDataPath = Join-Path $ResolvedGameDir "Data\Scripts.rxdata"
-    $iniPath = Join-Path $ResolvedGameDir "Game.ini"
+    $iniPath = Get-GameIniPath $ResolvedGameDir
     $archive = Get-ChildItem -Path $ResolvedGameDir -Filter "*.rgss*a*" -ErrorAction SilentlyContinue | Select-Object -First 1
 
     if (-not $DryRun) {
@@ -409,7 +434,7 @@ function Run-RestoreBackups([string]$ResolvedGameDir) {
 
     $mkxpPath = Join-Path $ResolvedGameDir "mkxp.json"
     $rxDataPath = Join-Path $ResolvedGameDir "Data\Scripts.rxdata"
-    $iniPath = Join-Path $ResolvedGameDir "Game.ini"
+    $iniPath = Get-GameIniPath $ResolvedGameDir
     $archive = Get-ChildItem -Path $ResolvedGameDir -Filter "*.rgss*a*" -ErrorAction SilentlyContinue | Select-Object -First 1
 
     if (-not $DryRun) {
@@ -655,7 +680,7 @@ public class RgssPatcher {
         scriptEnd = ptr + len;
 
         string rubyCode = Decompress(zlibData);
-        string inject = "begin\r\n  path = File.expand_path('Plugins/God Mode/god_mode.rb', Dir.pwd)\r\n  eval(File.binread(path), binding, path)\r\nrescue Exception => e\r\n  File.open('developer_menu_errors.log', 'a') {|f| f.puts e.message; f.puts e.backtrace.join(\"\\n\") }\r\nend\r\n";
+        string inject = "begin\r\n  path = File.expand_path('Plugins/God Mode/god_mode.rb', Dir.pwd)\r\n  code = File.open(path, 'rb') { |f| f.read }\r\n  eval(code, binding, path) if code\r\nrescue Exception => e\r\n  File.open('developer_menu_errors.log', 'a') {|f| f.puts e.message; f.puts e.backtrace.join(\"\\n\") }\r\nend\r\n";
         
         if (!rubyCode.Contains("god_mode.rb")) {
             rubyCode = inject + rubyCode;
@@ -957,7 +982,7 @@ try {
                 [RgssPatcher]::ApplyPatch($GameDir)
                 $InstallReport.RgssInjected = $true
                 
-                $iniPath = Join-Path $GameDir "Game.ini"
+                $iniPath = Get-GameIniPath $GameDir
                 if (Test-Path $iniPath) {
                     (Get-Content $iniPath) -replace "^Scripts=.*", "Scripts=Data\Scripts.rxdata" | Set-Content $iniPath -Encoding ASCII
                     $InstallReport.IniUpdated = $true

@@ -167,6 +167,28 @@
       false
     end
 
+    def module_has_method?(owner, method_name)
+      return false unless owner
+      method_text = method_name.to_s
+      [owner.instance_methods, owner.private_instance_methods, owner.protected_instance_methods].each do |list|
+        next unless list
+        list.each do |entry|
+          return true if entry.to_s == method_text
+        end
+      end
+      false
+    rescue
+      false
+    end
+
+    def safe_singleton_class(object)
+      class << object
+        self
+      end
+    rescue
+      nil
+    end
+
     def recalc_pokemon_stats(pkmn)
       pkmn.calc_stats if safe_respond_to?(pkmn, :calc_stats)
       pkmn.calcStats if safe_respond_to?(pkmn, :calcStats)
@@ -176,8 +198,8 @@
 
     def make_alias(alias_name, target_name, owner)
       return false unless owner
-      return false unless owner.method_defined?(target_name) || owner.private_method_defined?(target_name)
-      return false if owner.method_defined?(alias_name) || owner.private_method_defined?(alias_name)
+      return false unless module_has_method?(owner, target_name)
+      return false if module_has_method?(owner, alias_name)
       owner.send(:alias_method, alias_name, target_name)
       true
     rescue => e
@@ -187,9 +209,10 @@
 
     def make_singleton_alias(object, alias_name, target_name)
       return false unless object
-      eigenclass = class << object; self; end
-      return false unless eigenclass.method_defined?(target_name) || eigenclass.private_method_defined?(target_name)
-      return false if eigenclass.method_defined?(alias_name) || eigenclass.private_method_defined?(alias_name)
+      eigenclass = safe_singleton_class(object)
+      return false unless eigenclass
+      return false unless module_has_method?(eigenclass, target_name)
+      return false if module_has_method?(eigenclass, alias_name)
       eigenclass.send(:alias_method, alias_name, target_name)
       true
     rescue => e
