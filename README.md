@@ -128,17 +128,6 @@ If a game stops booting:
 4. Use **Sherlock** if the failure remains.
 5. Include `developer_menu_errors.log`, the install report and the Sherlock archive when reporting a problem.
 
-## Building from source
-
-Requirements:
-
-- Windows PowerShell 5.1 or newer.
-- Ruby is optional, but recommended for automatic syntax validation.
-
-Edit files inside `Source Code/ruby_modules/`. Do not edit `Source Code/god_mode_source.rb` directly because it is generated.
-
-Regenerate the combined Ruby source:
-
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Generate-GodModeSource.ps1
 ```
