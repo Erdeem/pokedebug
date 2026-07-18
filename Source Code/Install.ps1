@@ -713,7 +713,7 @@ function New-SherlockZip {
 
 function Send-SherlockWebhook {
     param([string]$ResolvedGameDir, $Diagnostics)
-    $defaultWebhook = "https://discord.com/api/webhooks/1524147723669078116/6l4WfVD7Pn56x9vjtC-HBZEf9hwJERHmyYPJzmNc-y6ThxiSpVKHftzV2hfw2X_CYekA"
+    $defaultWebhook = ""
     Write-Host "             " -NoNewline
     $inputUrl = (Read-Host (Get-Msg "Webhook URL (Press ENTER for default)" "URL do Webhook (Pressione ENTER para o padrao)" "URL del Webhook (Presione ENTER para el predeterminado)")).Trim()
     $url = if ([string]::IsNullOrWhiteSpace($inputUrl)) { $defaultWebhook } else { $inputUrl }
