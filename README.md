@@ -1,117 +1,183 @@
-# PokeDebug Improved
+# PokeDebug
 
-PokeDebug Improved is a compatibility-focused developer/debug menu for Pokemon fangames built on older and newer Essentials-based engines.
+PokeDebug is a cheat menu for Pokemon fangames built with Pokemon Essentials and related custom engines.
 
-This version is organized for easier maintenance, broader runtime compatibility, safer injection, and better support for unusual targets such as custom loaders, MKXP-Z builds, RGSS archives, and JoiPlay/mobile setups.
+The project combines a modular Ruby runtime with a single-file Windows installer. It detects the target game's layout, chooses an appropriate injection strategy and keeps fallbacks for older Essentials APIs, modern `GameData` engines, MKXP-Z, classic RGSS and JoiPlay.
 
-## Highlights
+> PokeDebug modifies game files. Keep a separate copy of the game and its save files before installing or using destructive debug actions.
 
-- Modular Ruby source split into focused compatibility layers
-- Generated monolithic build for distribution and injection
-- PowerShell installer with:
-  - install
-  - dry run
-  - uninstall
-  - backup restore
-- Detection of common injection paths:
-  - MKXP-Z preload
-  - raw `Scripts.rxdata`
-  - RGSS archive patching
-  - Enigma-packed game detection and unpack assist
-- Runtime compatibility helpers for older and newer Essentials APIs
-- JoiPlay/mobile fallback ways to open the menu
+## Functions
 
-## Project Structure
+- Engine, map, switch, variable, event and battle tools.
+- Pokemon creation, storage management and searchable species selection.
+- Item management with searchable, alphabetized lists and item IDs.
+- Player, party, stats, moves, abilities, forms, ribbons and utilities.
+- Runtime engine profiling and feature availability checks.
+- Compatibility adapters instead of assuming one exact Essentials version.
+- Transactional installation with validation and rollback.
+- English, Portuguese and Spanish interface.
+- JoiPlay support through a custom made key item "PokeDebug Device".
 
-- `Source Code/ruby_modules/`
-  Main modular Ruby source.
-- `Source Code/god_mode_source.rb`
-  Generated monolithic Ruby file built from the modules.
-- `Source Code/Install.ps1`
-  Main installer source.
-- `Install_Monolithic.ps1`
-  Generated standalone installer script.
-- `Build-Exe.ps1`
-  Builds `PokeDebug_Installer.exe`.
-- `Generate-GodModeSource.ps1`
-  Regenerates the monolithic Ruby source from modules.
-- `GUIDE_HOTKEYS.md`
-  End-user quick guide for hotkeys, opening methods, and mobile/JoiPlay usage.
+Some commands are hidden automatically when the required engine API is unavailable.
 
-## Recommended Workflow
+## Quick installation
 
-1. Edit files inside `Source Code/ruby_modules`.
-2. Regenerate the monolithic script:
+1. Download or build `PokeDebug_Installer.cmd`.
+2. Close the game completely.
+3. Run the `.cmd` in the game folder and choose your desired language.
+4. Use **Auto/1** unless a specific compatibility test requires another method.
+6. Choose the **hotkeys **.
+7. Confirm the installation.
+8. Start the game and open PokeDebug using one of the methods below.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\Generate-GodModeSource.ps1
+Only `PokeDebug_Installer.cmd` is required for redistribution. The PowerShell installer and Ruby payload are compressed inside it and validated before extraction.
+
+## Opening PokeDebug
+
+### Keyboard defaults
+
+| Action | Key |
+| --- | --- |
+| Open PokeDebug | `F6` |
+| Walk Through Walls | `F5` |
+| Heal party | `F9` |
+
+The hotkeys can be changed during installation.
+
+### PokeDebug Device
+
+On supported engines, PokeDebug registers a Key Item named **PokeDebug Device** and adds it to the player's Bag once. Using it closes the Bag first and then opens the menu, which makes it a reliable additional entry point for JoiPlay.
+
+The item system currently adapts to:
+
+- Modern engines using `GameData::Item`.
+- Older symbolic caches using `$cache.items` and `ItemData`.
+- Classic numeric item databases using `PBItems`.
+
+The device does not replace the existing hotkeys or script calls.
+
+### JoiPlay and mobile fallbacks
+
+- Hold `L + R`.
+- Hold `AUX1 + AUX2` or `X + Y`.
+- Extra combinations: `L + A`, `R + B` or `A + B + C`.
+- Open the Bag and use **PokeDebug Device**.
+
+Controller mappings vary between JoiPlay profiles. The Key Item is recommended when keyboard events are not forwarded correctly.
+
+### Event and script calls
+
+```ruby
+pbPokeDebugMenu
+pbPokeDebugMobileMenu
+pbOpenPokeDebugMenu
+pbDeveloperMenu
+pbGodModeMenu
 ```
 
-3. Build the installer:
+## Installer modes
+
+| Mode | Purpose |
+| --- | --- |
+| Auto | Detects the game layout and chooses the preferred strategy. |
+| MKXP | Forces MKXP-Z-style preload installation. |
+| RGSS | Forces classic RGSS script patching. |
+| Both | Applies both paths when a hybrid game needs them. |
+| Uninstall | Removes installed PokeDebug components. |
+| Restore Backup | Restores backups created by the installer. |
+| Sherlock | Collects detection and diagnostic information. |
+
+Auto mode prefers MKXP preload when MKXP-Z is detected. RGSS remains available as an explicit fallback for hybrid projects.
+
+## Supported layouts
+
+The installer detects and handles common layouts including:
+
+- `mkxp.json` preload injection.
+- Existing `Plugins` and preload-based projects.
+- `Data/Scripts.rxdata` patching.
+- `.rgssad`, `.rgss2a` and `.rgss3a` archives.
+- Hybrid MKXP/RGSS projects.
+- Enigma Virtual Box indicators and unpack guidance.
+
+Compatibility is capability-based. A game using a familiar Essentials version may still behave differently because fangames often replace core systems.
+
+### Tested targets
+
+The in-installer list currently includes Essentials v19-v21 and tests involving Pokemon Nova, Uranium, Insurgence, Anil, Z, Mauve, Infinite Fusion 2, Unbreakable Ties, Burning Scale, Vanguard and Echo. Rejuvenation is marked as partial support.
+
+Being listed means that an installation or compatibility path has been exercised; it does not guarantee that every debug command works in every release of that game.
+
+## Safety and recovery
+
+The installer:
+
+- Checks that the selected directory resembles a supported game.
+- Detects running game processes before modifying files.
+- Creates backups of files that will be changed.
+- Uses an installation transaction and rolls changes back after a failure.
+- Validates the installed payload.
+- Writes `PokeDebug_Install_Manifest.json`.
+- Writes `PokeDebug_Install_Report.txt`.
+
+If a game stops booting:
+
+1. Close the game.
+2. Run `PokeDebug_Installer.cmd` again.
+3. Choose **Restore Backup** or **Uninstall**.
+4. Use **Sherlock** if the failure remains.
+5. Include `developer_menu_errors.log`, the install report and the Sherlock archive when reporting a problem.
+
+## Building from source
+
+Requirements:
+
+- Windows PowerShell 5.1 or newer.
+- Ruby is optional, but recommended for automatic syntax validation.
+
+Edit files inside `Source Code/ruby_modules/`. Do not edit `Source Code/god_mode_source.rb` directly because it is generated.
+
+Regenerate the combined Ruby source:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\Build-Exe.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Generate-GodModeSource.ps1
 ```
 
-4. Distribute `PokeDebug_Installer.exe` or `Install_Monolithic.ps1`.
+Build the redistributable installer:
 
-## Installer Features
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Build-Master.ps1
+```
 
-The installer can automatically adapt to multiple game layouts.
+The build validates the PowerShell payload, checks Ruby syntax when Ruby is available, compresses the bundle, embeds it in the CMD and performs a SHA-256 extraction self-test.
 
-Supported/common paths:
+## Project structure
 
-- `mkxp.json` preload injection
-- `Data\Scripts.rxdata` patching
-- `*.rgssad` / `*.rgss2a` / `*.rgss3a` patching
-- Enigma Virtual Box packed executable detection
+```text
+PokeDebug/
+|-- Build-Master.ps1
+|-- Build-Master-2.ps1               # reduced no-upload/no-sprites build
+|-- Generate-GodModeSource.ps1
+|-- PokeDebug_Installer.cmd          # generated redistribution file
+|-- PokeDebug_Installer_2.cmd        # generated reduced redistribution file
+|-- README.md
+`-- Source Code/
+    |-- Install.ps1                  # installer source
+    |-- animated_sprites_compat.rb
+    |-- god_mode_source.rb           # generated Ruby payload
+    |-- preload_gm.rb                # MKXP/preload bootstrap
+    `-- ruby_modules/                 # editable runtime modules
+```
 
-The installer also shows:
+The Ruby module order is defined in `Generate-GodModeSource.ps1`. New runtime components must be added there before rebuilding.
 
-- detected injection method
-- detection confidence
-- profile selection
-- backup/rollback options
+## Known limitations
 
-## JoiPlay / Mobile Support
-
-Because hotkeys can fail on mobile or in JoiPlay, this build includes fallback access methods:
-
-- Hold `A + B + C` for a moment
-- Or use `L + R`
-- Or use `AUX1 + AUX2`
-- Or call one of these script functions:
-  - `pbPokeDebugMenu`
-  - `pbDeveloperMenu`
-  - `pbGodModeMenu`
-
-More details are in [GUIDE_HOTKEYS.md](./GUIDE_HOTKEYS.md).
-
-## Default Hotkeys
-
-- Open menu: `F6`
-- Walk Through Walls: `F5`
-- Heal party: `F9`
-
-These can be changed during installation.
-
-## Compatibility Goal
-
-This project aims to work across:
-
-- older Essentials-style fangame engines
-- modern Essentials versions
-- hybrid/customized projects with mixed APIs
-
-That is why many features use fallback calls, safe wrappers, and runtime detection instead of assuming one exact engine version.
-
-## Notes
-
-- Edit the modular source, not just the generated monolithic file.
-- Some heavily customized projects may still require project-specific adjustments.
-- Overcap stat editing is intentionally permissive, but some third-party plugins may still react badly if they assume vanilla limits.
+- Heavily customized engines may need a project-specific adapter.
+- Packed executables can require unpacking before script injection is possible.
+- Some debug actions depend on APIs removed by the game's developer.
+- Mobile controller mappings depend on the JoiPlay profile and Android device.
 
 ## Credits
 
-- Original project direction and ongoing testing by Kzuran
-- Built to support wide Essentials fangame compatibility rather than a single game branch
+- **Kzuran/Erdeem**.
