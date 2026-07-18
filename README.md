@@ -144,15 +144,11 @@ The build validates the PowerShell payload, checks Ruby syntax when Ruby is avai
 
 ```text
 PokeDebug/
-|-- Build-Master.ps1
-|-- Build-Master-2.ps1               # reduced no-upload/no-sprites build
-|-- Generate-GodModeSource.ps1
-|-- PokeDebug_Installer.cmd          # generated redistribution file
-|-- PokeDebug_Installer_2.cmd        # generated reduced redistribution file
+|-- License
+|-- PokeDebug_Installer.cmd        # generated release
 |-- README.md
 `-- Source Code/
     |-- Install.ps1                  # installer source
-    |-- animated_sprites_compat.rb
     |-- god_mode_source.rb           # generated Ruby payload
     |-- preload_gm.rb                # MKXP/preload bootstrap
     `-- ruby_modules/                 # editable runtime modules
