@@ -72,7 +72,6 @@ pbPokeDebugMenu
 pbPokeDebugMobileMenu
 pbOpenPokeDebugMenu
 pbDeveloperMenu
-pbGodModeMenu
 ```
 
 ## Installer modes
