@@ -2,7 +2,7 @@
 
 PokeDebug is a cheat menu for Pokemon fangames built with Pokemon Essentials and related custom engines.
 
-The project combines a modular Ruby runtime with a single-file Windows installer. It detects the target game's layout, chooses an appropriate injection strategy and keeps fallbacks for older Essentials APIs, modern `GameData` engines, MKXP-Z, classic RGSS and JoiPlay.
+The project combines a modular Ruby runtime with a single-file Windows only installer. It detects the target game's layout, chooses an appropriate injection strategy and keeps fallbacks for older Essentials APIs, modern `GameData` engines, MKXP-Z, classic RGSS.
 
 > PokeDebug modifies game files. Keep a separate copy of the game and its save files before installing or using destructive debug actions.
 
@@ -22,11 +22,11 @@ Some commands are hidden automatically when the required engine API is unavailab
 
 ## Quick installation
 
-1. Download or build `PokeDebug_Installer.cmd`.
+1. Download `PokeDebug_Installer.cmd`.
 2. Close the game completely.
 3. Run the `.cmd` in the game folder and choose your desired language.
-4. Use **Auto/1** unless a specific compatibility test requires another method.
-6. Choose the **hotkeys **.
+4. Use **Auto/1**.
+6. Choose the **hotkeys**.
 7. Confirm the installation.
 8. Start the game and open PokeDebug using one of the methods below.
 
@@ -128,18 +128,6 @@ If a game stops booting:
 4. Use **Sherlock** if the failure remains.
 5. Include `developer_menu_errors.log`, the install report and the Sherlock archive when reporting a problem.
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Generate-GodModeSource.ps1
-```
-
-Build the redistributable installer:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Build-Master.ps1
-```
-
-The build validates the PowerShell payload, checks Ruby syntax when Ruby is available, compresses the bundle, embeds it in the CMD and performs a SHA-256 extraction self-test.
-
 ## Project structure
 
 ```text
@@ -162,6 +150,7 @@ The Ruby module order is defined in `Generate-GodModeSource.ps1`. New runtime co
 - Packed executables can require unpacking before script injection is possible.
 - Some debug actions depend on APIs removed by the game's developer.
 - Mobile controller mappings depend on the JoiPlay profile and Android device.
+- No support on psdk games.
 
 ## Credits
 
