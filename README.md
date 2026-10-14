@@ -1,8 +1,8 @@
-# PokeDebug 3.1.4
+# PokeDebug 3.2.0
 
-PokeDebug is a cheat menu for Pokemon fangames built with Pokemon Essentials and related custom engines.
+PokeDebug is a cheat menu for Pokemon fangames built with Pokemon Essentials and related custom frameworks.
 
-The project combines a modular Ruby runtime with a single-file Windows installer. It detects the target game's layout, chooses an appropriate injection strategy and keeps fallbacks for older Essentials APIs, modern `GameData` engines, Pokemon SDK (PSDK), MKXP-Z, classic RGSS and JoiPlay.
+The project combines a modular Ruby runtime with a single-file Windows installer. It detects the target game's layout, chooses an appropriate injection strategy and keeps fallbacks for older Essentials APIs, modern `GameData` engines, MKXP-Z, classic RGSS and JoiPlay.
 
 There are two official activation/distribution paths: the normal local installer and the optional Discord **Bot Activation**, which validates the release manifest and SHA-256 before sending the latest `.cmd`. Bot setup is documented in `Discord Bot/README.md`.
 
