@@ -1,0 +1,11 @@
+{
+    "schema":  1,
+    "product":  "PokeDebug",
+    "version":  "3.1.4",
+    "filename":  "PokeDebug_Installer_Release.cmd",
+    "sha256":  "337682de9d37bfe853f44282a7eceffda27a8472e98e3138566dda221def02d9",
+    "payload_sha256":  "aa71b48e11abc555d052467eb3b28f46448013e009478481b08220a0898e2281",
+    "size":  222186,
+    "generated_at_utc":  "2026-10-14T21:37:33.0201702Z",
+    "download_url":  ""
+}

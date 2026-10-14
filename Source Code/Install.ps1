@@ -20,8 +20,17 @@ param(
     [switch]$NonInteractive
 )
 
+if ($GameDir -eq "__POKEDEBUG_CONHOST__") {
+    $GameDir = "."
+}
+
+$script:GameDirWasDefault = [string]::IsNullOrWhiteSpace($GameDir) -or $GameDir -eq "."
+if ($script:GameDirWasDefault -and -not [string]::IsNullOrWhiteSpace($env:POKEDEBUG_LAUNCH_DIR)) {
+    $GameDir = $env:POKEDEBUG_LAUNCH_DIR
+}
+
 $ErrorActionPreference = "Stop"
-$PokeDebugInstallerVersion = "3.1"
+$PokeDebugInstallerVersion = "3.1.4"
 
 # Supported hosts:
 # - Windows PowerShell 5.1 or newer Desktop edition
@@ -219,7 +228,17 @@ function Get-InjectionStrategy {
         Color = "Yellow"
     }
 
-    if ($Diagnostics.HasMkxp -and $Diagnostics.HasScriptsRxdata) {
+    if ($Diagnostics.HasPsdk) {
+        $strategy.Name = "Pokemon SDK / LiteRGSS2"
+        $strategy.Confidence = "High"
+        $strategy.Summary = "A delayed PSDK bridge will be loaded from Game.rb; compiled game data remains untouched."
+        $strategy.Color = "Green"
+    } elseif ($Diagnostics.HasYuriRgss) {
+        $strategy.Name = "Yuri RGSS Runtime"
+        $strategy.Confidence = "High"
+        $strategy.Summary = "Native runtime bridge will load PokeDebug without modifying the encrypted Scripts.pkg."
+        $strategy.Color = "Green"
+    } elseif ($Diagnostics.HasMkxp -and $Diagnostics.HasScriptsRxdata) {
         $strategy.Name = "Hybrid runtime (MKXP preferred)"
         $strategy.Confidence = "High"
         $strategy.Summary = "Automatic mode uses MKXP preload only; RGSS remains available as an explicit fallback."
@@ -237,7 +256,7 @@ function Get-InjectionStrategy {
     } elseif ($Diagnostics.HasMkxp) {
         $strategy.Name = "MKXP Preload"
         $strategy.Confidence = "High"
-        $strategy.Summary = "Plugin will load through mkxp.json and preload_gm.rb."
+        $strategy.Summary = "Plugin will load through mkxp.json and preload_menu.rb."
         $strategy.Color = "Green"
     } elseif ($Diagnostics.HasScriptsRxdata -or $Diagnostics.HasRgssArchive) {
         $strategy.Name = "RGSS Patch"
@@ -284,6 +303,53 @@ function Get-GameIniPath {
     }
 
     return $defaultIni
+}
+
+function Test-YuriRgssGame {
+    param([string]$ResolvedGameDir)
+
+    $result = [ordered]@{
+        Detected = $false
+        GameExePath = ""
+        ScriptsPkgPath = ""
+        DecoyScriptsRxdata = $false
+        Evidence = New-Object System.Collections.Generic.List[string]
+    }
+
+    try {
+        $gameExe = Join-Path $ResolvedGameDir "Game.exe"
+        $scriptsPkg = Join-Path $ResolvedGameDir "Data\Scripts.pkg"
+        $scriptsRxdata = Join-Path $ResolvedGameDir "Data\Scripts.rxdata"
+        $rgss301 = Join-Path $ResolvedGameDir "RGSS301.dll"
+        if (-not (Test-Path $gameExe -PathType Leaf)) { return [pscustomobject]$result }
+        if (-not (Test-Path $scriptsPkg -PathType Leaf)) { return [pscustomobject]$result }
+        if (-not (Test-Path $rgss301 -PathType Leaf)) { return [pscustomobject]$result }
+
+        $exeBytes = [System.IO.File]::ReadAllBytes($gameExe)
+        $exeText = [System.Text.Encoding]::ASCII.GetString($exeBytes)
+        $hasPlayerMarker = $exeText.Contains("Yuri RGSS Game Player")
+        $hasPackageMarker = $exeText.Contains("Data/Scripts.pkg")
+        $hasMainMarker = $exeText.Contains("RGSSGameMain")
+        $packageSize = (Get-Item -LiteralPath $scriptsPkg).Length
+        $decoy = $false
+        if (Test-Path $scriptsRxdata -PathType Leaf) {
+            $decoy = (Get-Item -LiteralPath $scriptsRxdata).Length -le 4096
+        }
+
+        if ($hasPlayerMarker) { [void]$result.Evidence.Add("Yuri player manifest") }
+        if ($hasPackageMarker) { [void]$result.Evidence.Add("Scripts.pkg loader") }
+        if ($hasMainMarker) { [void]$result.Evidence.Add("RGSSGameMain runtime") }
+        if ($packageSize -ge 65536) { [void]$result.Evidence.Add("encrypted package payload") }
+        if ($decoy) { [void]$result.Evidence.Add("small Scripts.rxdata bootstrap") }
+
+        $result.Detected = $hasPlayerMarker -and $hasPackageMarker -and $hasMainMarker -and ($packageSize -ge 65536)
+        $result.GameExePath = $gameExe
+        $result.ScriptsPkgPath = $scriptsPkg
+        $result.DecoyScriptsRxdata = $decoy
+    } catch {
+        $result.Detected = $false
+    }
+    return [pscustomobject]$result
 }
 
 function Test-EnigmaPackedGame {
@@ -392,14 +458,21 @@ function Get-InstallDiagnostics {
     param([string]$ResolvedGameDir)
 
     $mkxpPath = Join-Path $ResolvedGameDir "mkxp.json"
+    $mkxpPatchesPath = Join-Path $ResolvedGameDir "patches.json"
     $dataDir = Join-Path $ResolvedGameDir "Data"
     $rxDataPath = Join-Path $ResolvedGameDir "Data\Scripts.rxdata"
     $pluginScripts = Join-Path $ResolvedGameDir "Data\PluginScripts.rxdata"
     $pluginsDir = Join-Path $ResolvedGameDir "Plugins"
-    $preloadPath = Join-Path $ResolvedGameDir "preload_gm.rb"
+    $preloadPath = Join-Path $ResolvedGameDir "preload_menu.rb"
+    $legacyPreloadPath = Join-Path $ResolvedGameDir "preload_gm.rb"
+    $psdkGameRbPath = Join-Path $ResolvedGameDir "Game.rb"
+    $psdkGameYarbPath = Join-Path $ResolvedGameDir "Game.yarb"
+    $psdkScriptsPath = Join-Path $ResolvedGameDir "Data\Scripts.dat"
+    $psdkVersionPath = Join-Path $ResolvedGameDir "psdk\version.txt"
     $iniPath = Get-GameIniPath $ResolvedGameDir
     $archive = Get-ChildItem -Path $ResolvedGameDir -Filter "*.rgss*a*" -ErrorAction SilentlyContinue | Select-Object -First 1
     $enigma = Test-EnigmaPackedGame $ResolvedGameDir
+    $yuri = Test-YuriRgssGame $ResolvedGameDir
 
     $archiveName = ""
     $hasRgssArchive = $false
@@ -410,20 +483,38 @@ function Get-InstallDiagnostics {
 
     $diagnostics = New-Object System.Collections.Hashtable
     $diagnostics["GameDir"] = $ResolvedGameDir
-    $diagnostics["HasMkxp"] = (Test-Path $mkxpPath -PathType Leaf)
+    $diagnostics["HasMkxpConfig"] = (Test-Path $mkxpPath -PathType Leaf)
+    $diagnostics["HasMkxpPatches"] = (Test-Path $mkxpPatchesPath -PathType Leaf)
+    # Some MKXP distributions (notably certain Soulstones 2 packages) omit
+    # mkxp.json but retain patches.json. Treat that as an MKXP runtime signature
+    # instead of attempting to rewrite their incompatible RGSS script archive.
+    $diagnostics["HasMkxp"] = $diagnostics["HasMkxpConfig"] -or $diagnostics["HasMkxpPatches"]
     $diagnostics["HasDataDir"] = (Test-Path $dataDir -PathType Container)
     $diagnostics["HasScriptsRxdata"] = (Test-Path $rxDataPath -PathType Leaf)
+    $diagnostics["HasUsableScriptsRxdata"] = $diagnostics["HasScriptsRxdata"] -and -not $yuri.DecoyScriptsRxdata
     $diagnostics["HasRgssArchive"] = $hasRgssArchive
     $diagnostics["ArchiveName"] = $archiveName
     $diagnostics["HasPluginScripts"] = (Test-Path $pluginScripts -PathType Leaf)
     $diagnostics["HasPluginsDir"] = (Test-Path $pluginsDir -PathType Container)
     $diagnostics["HasPreloadFile"] = (Test-Path $preloadPath -PathType Leaf)
+    $diagnostics["HasLegacyPreloadFile"] = (Test-Path $legacyPreloadPath -PathType Leaf)
+    $diagnostics["HasPsdkGameRb"] = (Test-Path $psdkGameRbPath -PathType Leaf)
+    $diagnostics["HasPsdkGameYarb"] = (Test-Path $psdkGameYarbPath -PathType Leaf)
+    $diagnostics["HasPsdkScripts"] = (Test-Path $psdkScriptsPath -PathType Leaf)
+    $diagnostics["HasPsdkVersion"] = (Test-Path $psdkVersionPath -PathType Leaf)
+    $diagnostics["HasPsdk"] = $diagnostics["HasPsdkGameRb"] -and $diagnostics["HasPsdkGameYarb"] -and $diagnostics["HasPsdkScripts"] -and $diagnostics["HasPsdkVersion"]
+    $diagnostics["PsdkVersion"] = $(if ($diagnostics["HasPsdkVersion"]) { ([System.IO.File]::ReadAllText($psdkVersionPath)).Trim() } else { "" })
     $diagnostics["IniPath"] = $iniPath
     $diagnostics["HasIni"] = (Test-Path $iniPath -PathType Leaf)
     $diagnostics["EnigmaPacked"] = $enigma.Packed
     $diagnostics["EnigmaConfidence"] = $enigma.Confidence
     $diagnostics["EnigmaEvidence"] = $enigma.Evidence
     $diagnostics["PackedExePath"] = $enigma.ExePath
+    $diagnostics["HasYuriRgss"] = $yuri.Detected
+    $diagnostics["YuriGameExePath"] = $yuri.GameExePath
+    $diagnostics["YuriScriptsPkgPath"] = $yuri.ScriptsPkgPath
+    $diagnostics["YuriDecoyScriptsRxdata"] = $yuri.DecoyScriptsRxdata
+    $diagnostics["YuriEvidence"] = $yuri.Evidence
     return $diagnostics
 }
 
@@ -446,13 +537,27 @@ function Show-InstallDiagnostics {
     Show-CardLine "MKXP-Z" (Format-State $Diagnostics["HasMkxp"]) "Gray"
     Show-CardLine "Data folder" (Format-State $Diagnostics["HasDataDir"]) "Gray"
     Show-CardLine "Scripts.rxdata" (Format-State $Diagnostics["HasScriptsRxdata"]) "Gray"
+    if ($Diagnostics["YuriDecoyScriptsRxdata"]) {
+        Show-CardLine "Scripts.rxdata role" "Yuri bootstrap/decoy" "Yellow"
+    }
     Show-CardLine "RGSS archive" $archiveLabel "Gray"
     Show-CardLine "PluginScripts.rxdata" (Format-State $Diagnostics["HasPluginScripts"]) "Gray"
     Show-CardLine "Plugins folder" (Format-State $Diagnostics["HasPluginsDir"]) "Gray"
-    Show-CardLine "preload_gm.rb" (Format-State $Diagnostics["HasPreloadFile"]) "Gray"
+    Show-CardLine "preload_menu.rb" (Format-State $Diagnostics["HasPreloadFile"]) "Gray"
+    Show-CardLine "Pokemon SDK" (Format-State $Diagnostics["HasPsdk"]) $(if ($Diagnostics["HasPsdk"]) { "Green" } else { "Gray" })
+    if ($Diagnostics["HasPsdk"]) {
+        Show-CardLine "PSDK version" $Diagnostics["PsdkVersion"] "DarkGray"
+    }
+    if ($Diagnostics["HasLegacyPreloadFile"]) {
+        Show-CardLine "Legacy preload_gm.rb" (Format-State $true) "Yellow"
+    }
     Show-CardLine "Game INI" (Format-State $Diagnostics["HasIni"]) "Gray"
     if ($Diagnostics["HasIni"]) {
         Show-CardLine "INI path" $Diagnostics["IniPath"] "DarkGray"
+    }
+    if ($Diagnostics["HasYuriRgss"]) {
+        Show-CardLine "Yuri RGSS player" (Format-State $true) "Green"
+        Show-CardLine "Scripts.pkg" $Diagnostics["YuriScriptsPkgPath"] "DarkGray"
     }
     Show-CardLine "Enigma packed guess" (Format-State $Diagnostics["EnigmaPacked"]) $enigmaColor
     if ($Diagnostics["EnigmaPacked"]) {
@@ -508,12 +613,13 @@ function Show-MainActionMenu {
     Write-Host "             __________________________________________________" -ForegroundColor Gray
     Write-Host ""
     
+    Show-MenuItem "S" (Get-Msg "Animated Sprites" "Sprites Animados" "Sprites Animados") "Indigo Pack"
     Show-MenuItem "T" (Get-Msg "Tested Games" "Jogos Testados" "Juegos Probados") ""
     Show-MenuItem "H" (Get-Msg "Help" "Ajuda" "Ayuda") ""
     Show-MenuItem "0" (Get-Msg "Exit" "Sair" "Salir") ""
     
-    Show-KeyboardPrompt "1,2,3...T,H,0" (Get-Msg "Choose a menu option using your keyboard" "Escolha uma opcao usando o teclado" "Elija una opcion usando el teclado")
-    return (Read-MenuChoice " > " @("1","2","3","4","5","6","7","T","H","S","0") "1").ToUpperInvariant()
+    Show-KeyboardPrompt "1,2,3...S,T,H,0" (Get-Msg "Choose a menu option using your keyboard" "Escolha uma opcao usando o teclado" "Elija una opcion usando el teclado")
+    return (Read-MenuChoice " > " @("1","2","3","4","5","6","7","S","T","H","0") "1").ToUpperInvariant()
 }
 
 function Wait-GoBack([string]$Prompt = "") {
@@ -711,61 +817,7 @@ function New-SherlockZip {
     }
 }
 
-function Send-SherlockWebhook {
-    param([string]$ResolvedGameDir, $Diagnostics)
-    $defaultWebhook = ""
-    Write-Host "             " -NoNewline
-    $inputUrl = (Read-Host (Get-Msg "Webhook URL (Press ENTER for default)" "URL do Webhook (Pressione ENTER para o padrao)" "URL del Webhook (Presione ENTER para el predeterminado)")).Trim()
-    $url = if ([string]::IsNullOrWhiteSpace($inputUrl)) { $defaultWebhook } else { $inputUrl }
-    
-    $diagText = ""
-    foreach ($key in $Diagnostics.Keys) {
-        $value = $Diagnostics[$key]
-        if ($value -is [System.Collections.IEnumerable] -and -not ($value -is [string])) {
-            $value = ($value | ForEach-Object { $_.ToString() }) -join ", "
-        }
-        $diagText += "{0,-24}: {1}`n" -f $key, $value
-    }
-    
-    $reportText = ""
-    $reportPath = Get-InstallReportPath $ResolvedGameDir
-    if (Test-Path $reportPath) {
-        try {
-            $reportText = [System.IO.File]::ReadAllText($reportPath)
-        } catch {}
-    }
-    
-    if ([string]::IsNullOrWhiteSpace($reportText)) {
-        try {
-            $tempReportPath = Write-InstallReportFile $ResolvedGameDir
-            if (Test-Path $tempReportPath) {
-                $reportText = [System.IO.File]::ReadAllText($tempReportPath)
-                Remove-Item $tempReportPath -ErrorAction SilentlyContinue
-            }
-        } catch {}
-    }
-    
-    $reportBlock = ""
-    if (-not [string]::IsNullOrWhiteSpace($reportText)) {
-        $reportBlock = "`n**Install Report:**`n" + '```yaml' + "`n" + $reportText + '```'
-    }
 
-    $descriptionText = "**Game Directory:** " + $ResolvedGameDir + "`n`n**Diagnostics:**`n" + '```yaml' + "`n" + $diagText + '```' + $reportBlock
-
-    $payload = @{
-        content = "[Sherlock] **PokeDebug Diagnostics Report**"
-        embeds = @(@{
-            title = "Sherlock Results & Diagnostics"
-            description = $descriptionText
-            color = 3066993
-            footer = @{
-                text = "PokeDebug Sherlock Reporter | " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-            }
-        })
-    } | ConvertTo-Json -Depth 6
-    Invoke-WebRequest -Uri $url -Method Post -ContentType "application/json" -Body $payload | Out-Null
-    Log "`n             [+] Sherlock report sent." "Green"
-}
 
 function Show-SherlockMenu {
     param([string]$ResolvedGameDir, $Diagnostics)
@@ -782,44 +834,24 @@ function Show-SherlockMenu {
         Show-CardLine "Plugins folder" (Format-State $Diagnostics["HasPluginsDir"]) "Gray"
         Show-CardLine "Preload_gm.rb" (Format-State $Diagnostics["HasPreloadFile"]) "Gray"
         Show-CardLine "Game INI" (Format-State $Diagnostics["HasIni"]) "Gray"
-        if ($Diagnostics["HasIni"]) {
-            Show-CardLine "INI path" $Diagnostics["IniPath"] "DarkGray"
-        }
         Show-CardLine "Enigma packed guess" (Format-State $Diagnostics["EnigmaPacked"]) "Gray"
         Show-CardLine "Injection method" $strategy.Name $strategy.Color
         Show-CardLine "Detection confidence" $strategy.Confidence $strategy.Color
-        
         Write-Host ""
         Write-Host "             __________________________________________________" -ForegroundColor Gray
         Write-Host ""
-        
         Show-MenuItem "1" (Get-Msg "Pack logs as .zip" "Compactar logs em .zip" "Comprimir logs en .zip") ""
-        Show-MenuItem "2" (Get-Msg "Send logs to developer" "Enviar logs ao desenvolvedor" "Enviar logs al desarrollador") ""
-        Show-MenuItem "3" (Get-Msg "Go back" "Voltar" "Volver") ""
-        
-        Show-KeyboardPrompt "1,2,3"
-        $sherlockChoice = (Read-MenuChoice " > " @("1","2","3") "3").Trim()
-        switch ($sherlockChoice) {
-            "1" {
-                try {
-                    $zipPath = New-SherlockZip $ResolvedGameDir $Diagnostics
-                    Log ("`n             [+] Sherlock zip created: {0}" -f $zipPath) "Green"
-                } catch {
-                    Add-Warning ("`n             [!] Could not create Sherlock zip: {0}" -f $_.Exception.Message)
-                }
-                Wait-GoBack
-            }
-            "2" {
-                try {
-                    Send-SherlockWebhook $ResolvedGameDir $Diagnostics
-                } catch {
-                    Add-Warning ("`n             [!] Webhook send failed: {0}" -f $_.Exception.Message)
-                }
-                Wait-GoBack
-            }
-            "3" { return }
-            default { return }
+        Show-MenuItem "2" (Get-Msg "Go back" "Voltar" "Volver") ""
+        Show-KeyboardPrompt "1,2"
+        $sherlockChoice = (Read-MenuChoice " > " @("1","2") "2").Trim()
+        if ($sherlockChoice -eq "2") { return }
+        try {
+            $zipPath = New-SherlockZip $ResolvedGameDir $Diagnostics
+            Log ("`n             [+] Sherlock zip created: {0}" -f $zipPath) "Green"
+        } catch {
+            Add-Warning ("`n             [!] Could not create Sherlock zip: {0}" -f $_.Exception.Message)
         }
+        Wait-GoBack
     }
 }
 
@@ -855,12 +887,15 @@ $InstallReport = [ordered]@{
     DryRun         = $DryRun.IsPresent
     Uninstall      = $Uninstall.IsPresent
     RestoreBackups = $RestoreBackups.IsPresent
-    GodModeCopied  = $false
+    PokeDebugMenuCopied = $false
     PreloadCopied  = $false
     NativeDebugBootstrap = $false
     CompilerBypassBootstrap = $false
     MkxpInjected   = $false
     RgssInjected   = $false
+    YuriRgssInjected = $false
+    PsdkInjected   = $false
+    YuriPatchMode  = ""
     IniUpdated     = $false
     RollbackApplied = $false
     Warnings       = New-Object System.Collections.Generic.List[string]
@@ -953,12 +988,16 @@ function Show-MasDiagnosticsAnimation {
 function Resolve-InjectionPlan {
     param($Diagnostics, [string]$PatchMode = "AUTO")
     $mode = $PatchMode.Trim().ToUpperInvariant()
-    $hasRgssData = $Diagnostics.HasScriptsRxdata -or $Diagnostics.HasRgssArchive
-    if ($mode -eq "MKXP") { return [pscustomobject]@{ UseMkxp = $true; UseRgss = $false; Reason = "Explicit MKXP mode" } }
-    if ($mode -eq "RGSS") { return [pscustomobject]@{ UseMkxp = $false; UseRgss = $true; Reason = "Explicit RGSS mode" } }
-    if ($mode -eq "BOTH") { return [pscustomobject]@{ UseMkxp = $Diagnostics.HasMkxp; UseRgss = $hasRgssData; Reason = "Explicit dual mode" } }
-    if ($Diagnostics.HasMkxp) { return [pscustomobject]@{ UseMkxp = $true; UseRgss = $false; Reason = "MKXP detected and preferred" } }
-    return [pscustomobject]@{ UseMkxp = $false; UseRgss = $hasRgssData; Reason = "RGSS data detected without MKXP" }
+    $hasRgssData = $Diagnostics.HasUsableScriptsRxdata -or $Diagnostics.HasRgssArchive
+    $hasYuri = $Diagnostics.HasYuriRgss -eq $true
+    if ($mode -eq "MKXP") { return [pscustomobject]@{ UseMkxp = $true; UseRgss = $false; UseYuri = $false; Reason = "Explicit MKXP mode" } }
+    if ($mode -eq "RGSS") {
+        return [pscustomobject]@{ UseMkxp = $false; UseRgss = ($hasRgssData -and -not $hasYuri); UseYuri = $hasYuri; Reason = $(if ($hasYuri) { "Explicit RGSS mode routed to Yuri runtime bridge" } else { "Explicit RGSS mode" }) }
+    }
+    if ($mode -eq "BOTH") { return [pscustomobject]@{ UseMkxp = $Diagnostics.HasMkxp; UseRgss = ($hasRgssData -and -not $hasYuri); UseYuri = $hasYuri; Reason = "Explicit dual mode" } }
+    if ($hasYuri) { return [pscustomobject]@{ UseMkxp = $false; UseRgss = $false; UseYuri = $true; Reason = "Yuri encrypted runtime detected" } }
+    if ($Diagnostics.HasMkxp) { return [pscustomobject]@{ UseMkxp = $true; UseRgss = $false; UseYuri = $false; Reason = "MKXP detected and preferred" } }
+    return [pscustomobject]@{ UseMkxp = $false; UseRgss = $hasRgssData; UseYuri = $false; Reason = "RGSS data detected without MKXP" }
 }
 
 $InstallTransaction = $null
@@ -1038,6 +1077,7 @@ function Add-Note([string]$Message) {
 
 function Normalize-Hotkey([string]$Value, [string]$Default) {
     $allowed = @(
+        "DISABLED",
         "F1","F2","F3","F4","F5","F6","F7","F8","F9","F10","F11","F12",
         "SHIFT","CTRL","ALT",
         "A","B","C","D","E","F","G","H","I","J","K","L","M",
@@ -1132,7 +1172,7 @@ function Remove-MkxpPreloadScript([string]$Path, [string]$ScriptName) {
             $json.preloadScript = $filtered
         }
         $updatedJson = $json | ConvertTo-Json -Depth 32
-        [System.IO.File]::WriteAllText($Path, $updatedJson, (New-Object System.Text.UTF8Encoding $false))
+        Write-Utf8FileAtomic $Path $updatedJson
         return $true
     } catch {
     }
@@ -1144,7 +1184,7 @@ function Remove-MkxpPreloadScript([string]$Path, [string]$ScriptName) {
     $updated = [regex]::Replace($updated, '"preloadScript"\s*:\s*\[\s*"' + $escapedScript + '"\s*\]\s*,?', '', 1)
 
     if ($updated -ne $content) {
-        [System.IO.File]::WriteAllText($Path, $updated, (New-Object System.Text.UTF8Encoding $false))
+        Write-Utf8FileAtomic $Path $updated
         return $true
     }
 
@@ -1152,7 +1192,9 @@ function Remove-MkxpPreloadScript([string]$Path, [string]$ScriptName) {
 }
 
 function Remove-MkxpPreload([string]$Path) {
-    Remove-MkxpPreloadScript $Path "preload_gm.rb"
+    $removed = Remove-MkxpPreloadScript $Path "preload_menu.rb"
+    if (Remove-MkxpPreloadScript $Path "preload_gm.rb") { $removed = $true }
+    return $removed
 }
 
 function Remove-IfExists([string]$Path) {
@@ -1205,19 +1247,127 @@ function Write-Utf8FileAtomic {
     }
     $temporaryPath = "$Path.pokedebug.tmp"
     $replaceBackupPath = "$Path.pokedebug.replace.bak"
+    $originalAttributes = $null
+    $attributesChanged = $false
     try {
         [System.IO.File]::WriteAllText($temporaryPath, $Content, (New-Object System.Text.UTF8Encoding $false))
         if (Test-Path -LiteralPath $Path -PathType Leaf) {
+            $originalAttributes = [System.IO.File]::GetAttributes($Path)
+            if ($originalAttributes -band [System.IO.FileAttributes]::ReadOnly) {
+                [System.IO.File]::SetAttributes($Path, ($originalAttributes -band (-bnot [System.IO.FileAttributes]::ReadOnly)))
+                $attributesChanged = $true
+            }
             Remove-Item -LiteralPath $replaceBackupPath -Force -ErrorAction SilentlyContinue
             [System.IO.File]::Replace($temporaryPath, $Path, $replaceBackupPath, $true)
+            $attributesChanged = $true
             Remove-Item -LiteralPath $replaceBackupPath -Force -ErrorAction SilentlyContinue
         } else {
             Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
         }
     } finally {
+        if ($attributesChanged -and [System.IO.File]::Exists($Path)) {
+            [System.IO.File]::SetAttributes($Path, $originalAttributes)
+        }
         Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $replaceBackupPath -Force -ErrorAction SilentlyContinue
     }
+}
+
+function Write-YuriMenuChunks {
+    param(
+        [string]$MenuContent,
+        [string]$DestinationDirectory,
+        [switch]$ValidateOnly
+    )
+    $moduleOrder = @(
+        "00_header.rb",
+        "10_core_01_runtime.rb",
+        "10_core_02_engine_player.rb",
+        "10_core_03_pokemon.rb",
+        "10_core_04_stats_items.rb",
+        "10_core_05_battles_world.rb",
+        "10_core_06_search_ui.rb",
+        "11_input_and_mobile.rb",
+        "12_menu_helpers.rb",
+        "13_status_and_summaries.rb",
+        "14_engine_profile.rb",
+        "15_battle_access.rb",
+        "16_reports_and_extras.rb",
+        "17_engine_adapters.rb",
+        "18_pokedebug_device.rb",
+        "20_engine.rb",
+        "30_pokemon_items_player.rb",
+        "40_party.rb",
+        "45_battle_tools.rb",
+        "50_runtime_patches.rb"
+    )
+    $chunks = New-Object System.Collections.Generic.List[object]
+    for ($index = 0; $index -lt $moduleOrder.Count; $index++) {
+        $moduleName = $moduleOrder[$index]
+        $escapedName = [regex]::Escape($moduleName)
+        $match = [regex]::Match($MenuContent, "(?ms)^# --- BEGIN $escapedName ---\r?\n(.*?)^# --- END $escapedName ---")
+        if (-not $match.Success) { throw "Could not extract Yuri menu chunk: $moduleName" }
+        $body = $match.Groups[1].Value
+        if ($index -eq 0) {
+            # Ruby 1.9 (used by Yuri RGSS Game Player) can overflow its parser
+            # stack while compiling the large, nested translation hash. Keep
+            # the regular source unchanged, but materialize that constant in
+            # small update batches for the Yuri runtime.
+            $headerMatch = [regex]::Match(
+                $body,
+                '(?ms)\A(.*?^\s*TR\s*=\s*)\{\r?\n(.*)\r?\n\s{2}\}\s*(?:end\s*)?\z'
+            )
+            if (-not $headerMatch.Success) {
+                throw "Could not split the Yuri translation table safely."
+            }
+            $headerBase = $headerMatch.Groups[1].Value + "{}" + "`r`nend`r`n"
+            [void]$chunks.Add([pscustomobject]@{
+                Name = "00_00_header_base.rb"
+                Content = $headerBase
+            })
+
+            $translationLines = @(
+                $headerMatch.Groups[2].Value -split '\r?\n' |
+                    Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+            )
+            $translationBatchSize = 20
+            for ($offset = 0; $offset -lt $translationLines.Count; $offset += $translationBatchSize) {
+                $last = [Math]::Min($offset + $translationBatchSize - 1, $translationLines.Count - 1)
+                $batch = $translationLines[$offset..$last] -join "`r`n"
+                $batchNumber = [int]($offset / $translationBatchSize) + 1
+                $batchBody = "module DeveloperMenu`r`n  TR.update({`r`n" +
+                    $batch + "`r`n  })`r`nend`r`n"
+                [void]$chunks.Add([pscustomobject]@{
+                    Name = ("00_{0:D2}_translations.rb" -f $batchNumber)
+                    Content = $batchBody
+                })
+            }
+            continue
+        } else {
+            # In current PokeDebug modules, each module is already a syntactically
+            # complete Ruby unit that opens and closes module DeveloperMenu properly.
+            $body = $body.TrimEnd() + "
+"
+        }
+        $chunkName = "{0:D2}_{1}" -f $index, $moduleName
+        [void]$chunks.Add([pscustomobject]@{ Name=$chunkName; Content=$body })
+    }
+    if ($chunks.Count -le $moduleOrder.Count) { throw "Yuri menu chunk count validation failed." }
+    if (-not $ValidateOnly) {
+        if (-not (Test-Path $DestinationDirectory -PathType Container)) {
+            New-Item -ItemType Directory -Path $DestinationDirectory -Force | Out-Null
+        }
+        Get-ChildItem -LiteralPath $DestinationDirectory -Filter "*.rb" -File -ErrorAction SilentlyContinue |
+            ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
+        foreach ($chunk in $chunks) {
+            # Ruby 1.9 defaults source files to US-ASCII. Without this magic
+            # comment the first translated string containing an accent can
+            # terminate Yuri's embedded parser without a useful exception.
+            $encodedContent = "# encoding: UTF-8`r`n" + $chunk.Content
+            Write-Utf8FileAtomic (Join-Path $DestinationDirectory $chunk.Name) $encodedContent
+        }
+    }
+    return $chunks.Count
 }
 
 function Get-Sha256Hex([string]$Path) {
@@ -1230,15 +1380,20 @@ function Write-PokeDebugManifest {
     $manifestPath = Join-Path $ResolvedGameDir "PokeDebug_Install_Manifest.json"
     $pluginText = [System.IO.File]::ReadAllText($PluginPath, [System.Text.Encoding]::UTF8)
     $versionMatch = [regex]::Match($pluginText, 'VERSION\s*=\s*[''"]([^''"]+)[''"]')
+    $files = @(
+        [ordered]@{ path = "Plugins/PokeDebug/pokedebug_menu.rb"; sha256 = Get-Sha256Hex $PluginPath },
+        [ordered]@{ path = "preload_menu.rb"; sha256 = Get-Sha256Hex $PreloadPath }
+    )
+    $fallenCompatPath = Join-Path $ResolvedGameDir "pokefallen_compat.rb"
+    if (Test-Path -LiteralPath $fallenCompatPath -PathType Leaf) {
+        $files += [ordered]@{ path = "pokefallen_compat.rb"; sha256 = Get-Sha256Hex $fallenCompatPath }
+    }
     $manifest = [ordered]@{
         schema = 1
         installed_at = (Get-Date).ToUniversalTime().ToString("o")
         strategy = $Strategy
         plugin_version = $(if ($versionMatch.Success) { $versionMatch.Groups[1].Value } else { "unknown" })
-        files = @(
-            [ordered]@{ path = "Plugins/God Mode/god_mode.rb"; sha256 = Get-Sha256Hex $PluginPath },
-            [ordered]@{ path = "preload_gm.rb"; sha256 = Get-Sha256Hex $PreloadPath }
-        )
+        files = $files
     }
     Write-Utf8FileAtomic $manifestPath ($manifest | ConvertTo-Json -Depth 8)
     return $manifestPath
@@ -1246,32 +1401,155 @@ function Write-PokeDebugManifest {
 
 function Test-PokeDebugInstallation {
     param([string]$PluginPath, [string]$PreloadPath, [string]$MkxpPath, [bool]$ExpectMkxp)
-    if (-not (Test-Path -LiteralPath $PluginPath -PathType Leaf)) { throw "Installed god_mode.rb was not found." }
-    if ((Get-Item -LiteralPath $PluginPath).Length -lt 64) { throw "Installed god_mode.rb is unexpectedly small." }
+    if (-not (Test-Path -LiteralPath $PluginPath -PathType Leaf)) { throw "Installed pokedebug_menu.rb was not found." }
+    if ((Get-Item -LiteralPath $PluginPath).Length -lt 64) { throw "Installed pokedebug_menu.rb is unexpectedly small." }
     $pluginText = [System.IO.File]::ReadAllText($PluginPath, [System.Text.Encoding]::UTF8)
     if ($pluginText -notmatch 'module\s+DeveloperMenu' -or $pluginText -notmatch 'VERSION\s*=\s*[''"]') {
-        throw "Installed god_mode.rb does not contain the required DeveloperMenu version marker."
+        throw "Installed pokedebug_menu.rb does not contain the required DeveloperMenu version marker."
     }
     if ($ExpectMkxp) {
-        if (-not (Test-Path -LiteralPath $PreloadPath -PathType Leaf)) { throw "Installed preload_gm.rb was not found." }
+        if (-not (Test-Path -LiteralPath $PreloadPath -PathType Leaf)) { throw "Installed preload_menu.rb was not found." }
         $preloadText = [System.IO.File]::ReadAllText($PreloadPath, [System.Text.Encoding]::UTF8)
         if ($preloadText -notmatch 'EXPECTED_PLUGIN_SHA256\s*=\s*[''"][0-9a-f]{64}[''"]') { throw "Preload SHA-256 marker is missing." }
         $mkxpText = [System.IO.File]::ReadAllText($MkxpPath, [System.Text.Encoding]::UTF8)
         try {
             $json = ($mkxpText | ConvertFrom-Json -ErrorAction Stop)
             $preloads = @($json.preloadScript)
-            if (-not ($preloads | Where-Object { $_.ToString() -eq "preload_gm.rb" })) { throw "mkxp.json does not load preload_gm.rb." }
+            if (-not ($preloads | Where-Object { $_.ToString() -eq "preload_menu.rb" })) { throw "mkxp.json does not load preload_menu.rb." }
         } catch {
             # Several MKXP-Z games use JSON5-style comments/trailing commas.
             # Preserve that native format and validate the preload entry in place.
             $activeMkxpText = Get-MkxpActiveText $mkxpText
-            if ($activeMkxpText -notmatch '"preloadScript"\s*:\s*\[(?s).*?"preload_gm\.rb".*?\]') {
-                throw "mkxp.json could not be parsed and its preload_gm.rb entry was not confirmed."
+            if ($activeMkxpText -notmatch '"preloadScript"\s*:\s*\[(?s).*?"preload_menu\.rb".*?\]') {
+                throw "mkxp.json could not be parsed and its preload_menu.rb entry was not confirmed."
             }
         }
     }
     return $true
 }
+
+function Write-PsdkManifest {
+    param([string]$ResolvedGameDir, [string]$PluginPath, [string]$BootstrapPath, [string]$Strategy)
+    $manifestPath = Join-Path $ResolvedGameDir "PokeDebug_Install_Manifest.json"
+    $pluginText = [System.IO.File]::ReadAllText($PluginPath, [System.Text.Encoding]::UTF8)
+    $versionMatch = [regex]::Match($pluginText, 'VERSION\s*=\s*[''"]([^''"]+)[''"]')
+    $manifest = [ordered]@{
+        schema = 1
+        installed_at = (Get-Date).ToUniversalTime().ToString("o")
+        strategy = $Strategy
+        plugin_version = $(if ($versionMatch.Success) { $versionMatch.Groups[1].Value } else { "unknown" })
+        files = @(
+            [ordered]@{ path = "PokeDebug/pokedebug_menu.rb"; sha256 = Get-Sha256Hex $PluginPath },
+            [ordered]@{ path = "pokedebug_psdk_bootstrap.rb"; sha256 = Get-Sha256Hex $BootstrapPath }
+        )
+    }
+    Write-Utf8FileAtomic $manifestPath ($manifest | ConvertTo-Json -Depth 8)
+    return $manifestPath
+}
+
+function Run-PsdkInstall {
+    param(
+        [string]$ResolvedGameDir,
+        [string]$SelectedLanguage,
+        [string]$SelectedMenuKey,
+        [string]$SelectedWtwKey,
+        [string]$SelectedHealKey
+    )
+
+    $sourceMenu = Join-Path $PSScriptRoot "pokedebug_menu.rb"
+    $sourceBootstrap = Join-Path $PSScriptRoot "pokedebug_psdk_bootstrap.rb"
+    $pluginDir = Join-Path $ResolvedGameDir "PokeDebug"
+    $destMenu = Join-Path $pluginDir "pokedebug_menu.rb"
+    $destBootstrap = Join-Path $ResolvedGameDir "pokedebug_psdk_bootstrap.rb"
+    $gameRb = Join-Path $ResolvedGameDir "Game.rb"
+    $gameBackup = $gameRb + ".pokedebug.bak"
+    $manifestPath = Join-Path $ResolvedGameDir "PokeDebug_Install_Manifest.json"
+    $reportPath = Get-InstallReportPath $ResolvedGameDir
+    $marker = "# PokeDebug PSDK bootstrap"
+
+    foreach ($required in @($sourceMenu, $sourceBootstrap, $gameRb, (Join-Path $ResolvedGameDir "Game.yarb"), (Join-Path $ResolvedGameDir "Data\Scripts.dat"))) {
+        if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
+            throw ("Required PSDK file was not found: {0}" -f $required)
+        }
+    }
+
+    $menuContent = [System.IO.File]::ReadAllText($sourceMenu, [System.Text.Encoding]::UTF8)
+    $menuContent = [regex]::Replace($menuContent, "LANG = '.*?'", "LANG = '$($SelectedLanguage.ToLower())'", 1)
+    $menuContent = [regex]::Replace($menuContent, "MENU_HOTKEY = '.*?'", "MENU_HOTKEY = '$($SelectedMenuKey.Trim().ToUpper())'", 1)
+    $menuContent = [regex]::Replace($menuContent, "WTW_HOTKEY = '.*?'", "WTW_HOTKEY = '$($SelectedWtwKey.Trim().ToUpper())'", 1)
+    $menuContent = [regex]::Replace($menuContent, "HEAL_HOTKEY = '.*?'", "HEAL_HOTKEY = '$($SelectedHealKey.Trim().ToUpper())'", 1)
+    if ($menuContent -notmatch 'module\s+DeveloperMenu' -or $menuContent -notmatch 'class\s+PSDK\s*<\s*Base') {
+        throw "The generated menu does not contain the PSDK adapter."
+    }
+
+    $gameContent = [System.IO.File]::ReadAllText($gameRb, [System.Text.Encoding]::UTF8)
+    $patchedGameContent = $gameContent
+    if ($gameContent -notmatch '(?m)^# PokeDebug PSDK bootstrap\s*$') {
+        $bootstrapLine = "load File.expand_path('pokedebug_psdk_bootstrap.rb', __dir__)"
+        $patchedGameContent = $marker + "`r`n" + $bootstrapLine + "`r`n" + $gameContent
+    }
+
+    if ($DryRun) {
+        Add-Note ("[*] PSDK {0} validated. Game.rb would receive one reversible loader line." -f $Diagnostics.PsdkVersion)
+        Add-Note "[*] Game.yarb, Data\Scripts.dat and Saves would not be modified."
+        return
+    }
+
+    $script:InstallTransaction = Start-InstallTransaction @($pluginDir, $destBootstrap, $gameRb, $gameBackup, $manifestPath, $reportPath)
+    if (-not (Test-Path -LiteralPath $pluginDir -PathType Container)) {
+        New-Item -ItemType Directory -Path $pluginDir -Force | Out-Null
+    }
+    [void](Backup-File $gameRb)
+    Write-Utf8FileAtomic $destMenu $menuContent
+    Copy-Item -LiteralPath $sourceBootstrap -Destination $destBootstrap -Force
+    Write-Utf8FileAtomic $gameRb $patchedGameContent
+
+    $installedGame = [System.IO.File]::ReadAllText($gameRb, [System.Text.Encoding]::UTF8)
+    if (([regex]::Matches($installedGame, '(?m)^# PokeDebug PSDK bootstrap\s*$')).Count -ne 1) {
+        throw "PSDK Game.rb bootstrap validation failed."
+    }
+    if (-not (Test-Path -LiteralPath $destMenu -PathType Leaf) -or -not (Test-Path -LiteralPath $destBootstrap -PathType Leaf)) {
+        throw "PSDK payload validation failed after copying files."
+    }
+
+    $InstallReport.PokeDebugMenuCopied = $true
+    $InstallReport.PreloadCopied = $true
+    $InstallReport.PsdkInjected = $true
+    [void](Write-PsdkManifest $ResolvedGameDir $destMenu $destBootstrap $InstallReport.StrategyName)
+    Add-Note "[+] PSDK bridge installed without modifying compiled scripts or save files."
+    [void](Write-InstallReportFile $ResolvedGameDir)
+    Complete-InstallTransaction
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 function Test-IndigoPokemonRoot([string]$Path) {
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path $Path -PathType Container)) { return $false }
@@ -1579,7 +1857,7 @@ function Enable-AnimatedSpritesCompatLoaders {
     $jsonPath = Join-Path $ResolvedGameDir "mkxp.json"
     if (Test-Path $jsonPath -PathType Leaf) {
         [void](Backup-File $jsonPath)
-        if (Test-Path (Join-Path $ResolvedGameDir "preload_gm.rb") -PathType Leaf) {
+        if (Test-Path (Join-Path $ResolvedGameDir "preload_menu.rb") -PathType Leaf) {
             [void](Remove-MkxpPreloadScript $jsonPath "animated_sprites_compat.rb")
             $result = Add-MkxpPreloadScript $jsonPath "animated_sprites.rb"
             if ($result.Changed -or $result.Reason -eq "already_present") {
@@ -1699,43 +1977,6 @@ function Install-IndigoPokemonPack {
     }
 }
 
-function Get-RunningGameProcesses([string]$ResolvedGameDir) {
-    $matches = New-Object System.Collections.Generic.List[object]
-    $normalizedDir = [System.IO.Path]::GetFullPath($ResolvedGameDir)
-    $currentPid = $PID
-    Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
-        try {
-            $processId = $_.Id
-            $processName = ""
-            try { $processName = [string]$_.ProcessName } catch { $processName = "" }
-            if ($processId -eq $currentPid) { return }
-            if ($processName -match '^powershell(|_ise)$') { return }
-            if ($processName -eq "PokeDebug_Installer") { return }
-            $processPath = $_.MainModule.FileName
-            if (-not [string]::IsNullOrWhiteSpace($processPath)) {
-                $fullProcessPath = [System.IO.Path]::GetFullPath($processPath)
-                if ($fullProcessPath.StartsWith($normalizedDir, [System.StringComparison]::OrdinalIgnoreCase)) {
-                    $matches.Add([pscustomobject]@{
-                        Id = $processId
-                        ProcessName = $(if ([string]::IsNullOrWhiteSpace($processName)) { [System.IO.Path]::GetFileNameWithoutExtension($fullProcessPath) } else { $processName })
-                        Path = $fullProcessPath
-                    }) | Out-Null
-                }
-            }
-        } catch {
-        }
-    }
-    $matches
-}
-
-function Get-InstallReportPath([string]$ResolvedGameDir) {
-    Join-Path $ResolvedGameDir "PokeDebug_Install_Report.txt"
-}
-
-function Get-SpritesReportPath([string]$ResolvedGameDir) {
-    Join-Path $ResolvedGameDir "PokeDebug_Sprites_Report.txt"
-}
-
 function Write-SpritesReportFile([string]$ResolvedGameDir) {
     $lines = @()
     $lines += "=== PokeDebug Animated Sprites Report ==="
@@ -1769,6 +2010,108 @@ function Write-SpritesReportFile([string]$ResolvedGameDir) {
     return $reportPath
 }
 
+function Send-SherlockWebhook {
+    param([string]$ResolvedGameDir, $Diagnostics)
+    $defaultWebhook = $env:POKEDEBUG_SHERLOCK_WEBHOOK
+    Write-Host "             " -NoNewline
+    $inputUrl = (Read-Host (Get-Msg "Webhook URL (Press ENTER for default)" "URL do Webhook (Pressione ENTER para o padrao)" "URL del Webhook (Presione ENTER para el predeterminado)")).Trim()
+    $url = if ([string]::IsNullOrWhiteSpace($inputUrl)) { $defaultWebhook } else { $inputUrl }
+    if ([string]::IsNullOrWhiteSpace($url)) {
+        Log ("`n             [!] " + (Get-Msg "No webhook URL provided. Set POKEDEBUG_SHERLOCK_WEBHOOK or enter a URL." "Nenhuma URL de webhook fornecida. Defina POKEDEBUG_SHERLOCK_WEBHOOK ou insira uma URL." "No se proporciono URL de webhook. Defina POKEDEBUG_SHERLOCK_WEBHOOK o ingrese una URL.")) "Yellow"
+        Wait-GoBack
+        return
+    }
+    
+    $diagText = ""
+    foreach ($key in $Diagnostics.Keys) {
+        $value = $Diagnostics[$key]
+        if ($value -is [System.Collections.IEnumerable] -and -not ($value -is [string])) {
+            $value = ($value | ForEach-Object { $_.ToString() }) -join ", "
+        }
+        $diagText += "{0,-24}: {1}`n" -f $key, $value
+    }
+    
+    $reportText = ""
+    $reportPath = Get-InstallReportPath $ResolvedGameDir
+    if (Test-Path $reportPath) {
+        try {
+            $reportText = [System.IO.File]::ReadAllText($reportPath)
+        } catch {}
+    }
+    
+    if ([string]::IsNullOrWhiteSpace($reportText)) {
+        try {
+            $tempReportPath = Write-InstallReportFile $ResolvedGameDir
+            if (Test-Path $tempReportPath) {
+                $reportText = [System.IO.File]::ReadAllText($tempReportPath)
+                Remove-Item $tempReportPath -ErrorAction SilentlyContinue
+            }
+        } catch {}
+    }
+    
+    $reportBlock = ""
+    if (-not [string]::IsNullOrWhiteSpace($reportText)) {
+        $reportBlock = "`n**Install Report:**`n" + '```yaml' + "`n" + $reportText + '```'
+    }
+
+    $descriptionText = "**Game Directory:** " + $ResolvedGameDir + "`n`n**Diagnostics:**`n" + '```yaml' + "`n" + $diagText + '```' + $reportBlock
+
+    $payload = @{
+        content = "[Sherlock] **PokeDebug Diagnostics Report**"
+        embeds = @(@{
+            title = "Sherlock Results & Diagnostics"
+            description = $descriptionText
+            color = 3066993
+            footer = @{
+                text = "PokeDebug Sherlock Reporter | " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+            }
+        })
+    } | ConvertTo-Json -Depth 6
+    Invoke-WebRequest -Uri $url -Method Post -ContentType "application/json" -Body $payload | Out-Null
+    Log "`n             [+] Sherlock report sent." "Green"
+}
+
+function Get-RunningGameProcesses([string]$ResolvedGameDir) {
+    $processMatches = New-Object System.Collections.Generic.List[object]
+    $normalizedDir = [System.IO.Path]::GetFullPath($ResolvedGameDir)
+    $currentPid = $PID
+    Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
+        try {
+            $processId = $_.Id
+            $processName = ""
+            try { $processName = [string]$_.ProcessName } catch { $processName = "" }
+            if ($processId -eq $currentPid) { return }
+            if ($processName -match '^powershell(|_ise)$') { return }
+            if ($processName -eq "PokeDebug_Installer") { return }
+            $processPath = $_.MainModule.FileName
+            if (-not [string]::IsNullOrWhiteSpace($processPath)) {
+                $fullProcessPath = [System.IO.Path]::GetFullPath($processPath)
+                if ($fullProcessPath.StartsWith($normalizedDir, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    $processMatches.Add([pscustomobject]@{
+                        Id = $processId
+                        ProcessName = $(if ([string]::IsNullOrWhiteSpace($processName)) { [System.IO.Path]::GetFileNameWithoutExtension($fullProcessPath) } else { $processName })
+                        Path = $fullProcessPath
+                    }) | Out-Null
+                }
+            }
+        } catch {
+        }
+    }
+    foreach ($matchedProcess in $processMatches) {
+        Write-Output $matchedProcess
+    }
+}
+
+function Get-InstallReportPath([string]$ResolvedGameDir) {
+    Join-Path $ResolvedGameDir "PokeDebug_Install_Report.txt"
+}
+
+function Get-SpritesReportPath([string]$ResolvedGameDir) {
+    Join-Path $ResolvedGameDir "PokeDebug_Sprites_Report.txt"
+}
+
+
+
 function Write-InstallReportFile([string]$ResolvedGameDir) {
     $lines = @()
     $lines += "=== PokeDebug Install Report ==="
@@ -1779,12 +2122,15 @@ function Write-InstallReportFile([string]$ResolvedGameDir) {
     $lines += ("DryRun: {0}" -f $InstallReport.DryRun)
     $lines += ("Uninstall: {0}" -f $InstallReport.Uninstall)
     $lines += ("RestoreBackups: {0}" -f $InstallReport.RestoreBackups)
-    $lines += ("GodModeCopied: {0}" -f $InstallReport.GodModeCopied)
+    $lines += ("PokeDebugMenuCopied: {0}" -f $InstallReport.PokeDebugMenuCopied)
     $lines += ("PreloadCopied: {0}" -f $InstallReport.PreloadCopied)
     $lines += ("NativeDebugBootstrap: {0}" -f $InstallReport.NativeDebugBootstrap)
     $lines += ("CompilerBypassBootstrap: {0}" -f $InstallReport.CompilerBypassBootstrap)
     $lines += ("MkxpInjected: {0}" -f $InstallReport.MkxpInjected)
     $lines += ("RgssInjected: {0}" -f $InstallReport.RgssInjected)
+    $lines += ("YuriRgssInjected: {0}" -f $InstallReport.YuriRgssInjected)
+    $lines += ("PsdkInjected: {0}" -f $InstallReport.PsdkInjected)
+    $lines += ("YuriPatchMode: {0}" -f $InstallReport.YuriPatchMode)
     $lines += ("IniUpdated: {0}" -f $InstallReport.IniUpdated)
     $lines += ("RollbackApplied: {0}" -f $InstallReport.RollbackApplied)
     $lines += ("IndigoPackInstalled: {0}" -f $InstallReport.IndigoPackInstalled)
@@ -1814,17 +2160,26 @@ function Write-InstallReportFile([string]$ResolvedGameDir) {
 function Run-Uninstall([string]$ResolvedGameDir) {
     Log (Get-Msg "[*] Starting uninstall / rollback..." "[*] Iniciando desinstalacao / rollback..." "[*] Iniciando desinstalacion / rollback...") "Cyan"
 
-    $pluginDir = Join-Path $ResolvedGameDir "Plugins\God Mode"
+    $pluginDir = Join-Path $ResolvedGameDir "Plugins\PokeDebug"
+    $legacyPluginDir = Join-Path $ResolvedGameDir ("Plugins\{0} {1}" -f "God", "Mode")
     $animatedSpritesPluginDir = Join-Path $ResolvedGameDir "Plugins\Animated Sprites"
     $pluginsRoot = Split-Path $pluginDir -Parent
-    $preloadPath = Join-Path $ResolvedGameDir "preload_gm.rb"
+    $preloadPath = Join-Path $ResolvedGameDir "preload_menu.rb"
+    $legacyPreloadPath = Join-Path $ResolvedGameDir "preload_gm.rb"
     $animatedSpritesRootPath = Join-Path $ResolvedGameDir "animated_sprites.rb"
+    $pokeFallenCompatPath = Join-Path $ResolvedGameDir "pokefallen_compat.rb"
+    $yuriBootstrapPath = Join-Path $ResolvedGameDir "pokedebug_yuri_bootstrap.rb"
+    $gameExePath = Join-Path $ResolvedGameDir "Game.exe"
+    $psdkGameRbPath = Join-Path $ResolvedGameDir "Game.rb"
+    $psdkBootstrapPath = Join-Path $ResolvedGameDir "pokedebug_psdk_bootstrap.rb"
+    $psdkPluginDir = Join-Path $ResolvedGameDir "PokeDebug"
+    $psdkLogPath = Join-Path $ResolvedGameDir "pokedebug_psdk_bootstrap.log"
     $mkxpPath = Join-Path $ResolvedGameDir "mkxp.json"
     $rxDataPath = Join-Path $ResolvedGameDir "Data\Scripts.rxdata"
     $iniPath = Get-GameIniPath $ResolvedGameDir
     $reportPath = Get-InstallReportPath $ResolvedGameDir
     $manifestPath = Join-Path $ResolvedGameDir "PokeDebug_Install_Manifest.json"
-    $spritesReportPath = Get-SpritesReportPath $ResolvedGameDir
+    $spritesReportPath = Join-Path $ResolvedGameDir "PokeDebug_Sprites_Report.txt"
     $menuErrorLogPath = Join-Path $ResolvedGameDir "developer_menu_errors.log"
     $archive = Get-ChildItem -Path $ResolvedGameDir -Filter "*.rgss*a*" -ErrorAction SilentlyContinue | Select-Object -First 1
 
@@ -1840,11 +2195,20 @@ function Run-Uninstall([string]$ResolvedGameDir) {
         if (Restore-BackupFile $rxDataPath) { $InstallReport.RollbackApplied = $true }
         if ($archive -and (Restore-BackupFile $archive.FullName)) { $InstallReport.RollbackApplied = $true }
         if (Restore-BackupFile $iniPath) { $InstallReport.RollbackApplied = $true }
+        if (Restore-BackupFile $gameExePath) { $InstallReport.RollbackApplied = $true }
+        if (Restore-BackupFile $psdkGameRbPath) { $InstallReport.RollbackApplied = $true }
 
         if (Remove-IfExistsSafe $preloadPath) { $InstallReport.RollbackApplied = $true }
+        if (Remove-IfExistsSafe $legacyPreloadPath) { $InstallReport.RollbackApplied = $true }
         if (Remove-IfExistsSafe $animatedSpritesRootPath) { $InstallReport.RollbackApplied = $true }
+        if (Remove-IfExistsSafe $pokeFallenCompatPath) { $InstallReport.RollbackApplied = $true }
+        if (Remove-IfExistsSafe $yuriBootstrapPath) { $InstallReport.RollbackApplied = $true }
+        if (Remove-IfExistsSafe $psdkBootstrapPath) { $InstallReport.RollbackApplied = $true }
+        if (Remove-IfExistsSafe $psdkPluginDir) { $InstallReport.RollbackApplied = $true }
+        [void](Remove-IfExistsSafe $psdkLogPath)
         if (Remove-IfExistsSafe $animatedSpritesPluginDir) { $InstallReport.RollbackApplied = $true }
         if (Remove-IfExistsSafe $pluginDir) { $InstallReport.RollbackApplied = $true }
+        if (Remove-IfExistsSafe $legacyPluginDir) { $InstallReport.RollbackApplied = $true }
         [void](Remove-DirectoryIfEmpty $pluginsRoot)
         [void](Remove-IfExistsSafe $menuErrorLogPath)
         [void](Remove-IfExistsSafe $reportPath)
@@ -1861,6 +2225,8 @@ function Run-RestoreBackups([string]$ResolvedGameDir) {
     $mkxpPath = Join-Path $ResolvedGameDir "mkxp.json"
     $rxDataPath = Join-Path $ResolvedGameDir "Data\Scripts.rxdata"
     $iniPath = Get-GameIniPath $ResolvedGameDir
+    $gameExePath = Join-Path $ResolvedGameDir "Game.exe"
+    $psdkGameRbPath = Join-Path $ResolvedGameDir "Game.rb"
     $archive = Get-ChildItem -Path $ResolvedGameDir -Filter "*.rgss*a*" -ErrorAction SilentlyContinue | Select-Object -First 1
 
     if (-not $DryRun) {
@@ -1868,6 +2234,8 @@ function Run-RestoreBackups([string]$ResolvedGameDir) {
         if (Restore-BackupFile $rxDataPath) { $InstallReport.RollbackApplied = $true }
         if ($archive -and (Restore-BackupFile $archive.FullName)) { $InstallReport.RollbackApplied = $true }
         if (Restore-BackupFile $iniPath) { $InstallReport.RollbackApplied = $true }
+        if (Restore-BackupFile $gameExePath) { $InstallReport.RollbackApplied = $true }
+        if (Restore-BackupFile $psdkGameRbPath) { $InstallReport.RollbackApplied = $true }
     }
 
     if (-not $InstallReport.RollbackApplied) {
@@ -1885,6 +2253,9 @@ function Get-MkxpActiveText([string]$Content) {
 }
 
 function Update-MkxpPreload([string]$Path) {
+    # Migrate installations made before the preload file was renamed. The
+    # caller has already backed up mkxp.json, so this remains transactional.
+    $legacyRemoved = Remove-MkxpPreloadScript $Path "preload_gm.rb"
     $content = [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::UTF8)
     try {
         $json = $content | ConvertFrom-Json -ErrorAction Stop
@@ -1896,11 +2267,11 @@ function Update-MkxpPreload([string]$Path) {
                 $current = @($json.preloadScript)
             }
         }
-        if ($current | Where-Object { $_.ToString() -eq "preload_gm.rb" }) {
-            return @{ Changed = $false; Reason = "already_present" }
+        if ($current | Where-Object { $_.ToString() -eq "preload_menu.rb" }) {
+            return @{ Changed = [bool]$legacyRemoved; Reason = $(if ($legacyRemoved) { "updated" } else { "already_present" }) }
         }
         $json | Add-Member -NotePropertyName preloadScript -NotePropertyValue @() -Force
-        $json.preloadScript = @($current + "preload_gm.rb")
+        $json.preloadScript = @($current + "preload_menu.rb")
         $updatedJson = $json | ConvertTo-Json -Depth 32
         if ($updatedJson -eq $content) {
             return @{ Changed = $false; Reason = "no_changes" }
@@ -1911,8 +2282,8 @@ function Update-MkxpPreload([string]$Path) {
     }
 
     $activeContent = Get-MkxpActiveText $content
-    if ($activeContent -match '"preloadScript"\s*:\s*\[(?s).*?"preload_gm\.rb".*?\]') {
-        return @{ Changed = $false; Reason = "already_present" }
+    if ($activeContent -match '"preloadScript"\s*:\s*\[(?s).*?"preload_menu\.rb".*?\]') {
+        return @{ Changed = [bool]$legacyRemoved; Reason = $(if ($legacyRemoved) { "updated" } else { "already_present" }) }
     }
 
     $updated = $content
@@ -1926,15 +2297,15 @@ function Update-MkxpPreload([string]$Path) {
                 param($m)
                 $inner = $m.Groups[1].Value.Trim()
                 if ([string]::IsNullOrWhiteSpace($inner)) {
-                    '"preloadScript": ["preload_gm.rb"]'
+                    '"preloadScript": ["preload_menu.rb"]'
                 } else {
-                    '"preloadScript": [' + $inner + ', "preload_gm.rb"]'
+                    '"preloadScript": [' + $inner + ', "preload_menu.rb"]'
                 }
             },
             1
         )
     } elseif ($content -match $activeStringPattern) {
-        $updated = [regex]::Replace($content, $activeStringPattern, '"preloadScript": ["$1", "preload_gm.rb"]', 1)
+        $updated = [regex]::Replace($content, $activeStringPattern, '"preloadScript": ["$1", "preload_menu.rb"]', 1)
     } else {
         $match = [regex]::Match($content, '\}(?![\s\S]*\})')
         if (-not $match.Success) {
@@ -1946,14 +2317,14 @@ function Update-MkxpPreload([string]$Path) {
         if ($beforeTrimmed.Length -gt 0 -and -not $beforeTrimmed.EndsWith("{") -and -not $beforeTrimmed.EndsWith(",")) {
             $before = $beforeTrimmed + "," + $before.Substring($beforeTrimmed.Length)
         }
-        $updated = $before + [Environment]::NewLine + '  "preloadScript": ["preload_gm.rb"]' + $content.Substring($match.Index)
+        $updated = $before + [Environment]::NewLine + '  "preloadScript": ["preload_menu.rb"]' + $content.Substring($match.Index)
     }
 
     if ($updated -eq $content) {
         return @{ Changed = $false; Reason = "no_changes" }
     }
 
-    [System.IO.File]::WriteAllText($Path, $updated, (New-Object System.Text.UTF8Encoding $false))
+    Write-Utf8FileAtomic $Path $updated
     return @{ Changed = $true; Reason = "updated" }
 }
 
@@ -1977,7 +2348,7 @@ function Add-MkxpPreloadScript([string]$Path, [string]$ScriptName) {
         $json | Add-Member -NotePropertyName preloadScript -NotePropertyValue @() -Force
         $json.preloadScript = @($current + $ScriptName)
         $updatedJson = $json | ConvertTo-Json -Depth 32
-        [System.IO.File]::WriteAllText($Path, $updatedJson, (New-Object System.Text.UTF8Encoding $false))
+        Write-Utf8FileAtomic $Path $updatedJson
         return @{ Changed = $true; Reason = "updated" }
     } catch {
         $jsonError = $_.Exception.Message
@@ -2023,7 +2394,7 @@ function Add-MkxpPreloadScript([string]$Path, [string]$ScriptName) {
         return @{ Changed = $false; Reason = "no_changes" }
     }
 
-    [System.IO.File]::WriteAllText($Path, $updated, (New-Object System.Text.UTF8Encoding $false))
+    Write-Utf8FileAtomic $Path $updated
     return @{ Changed = $true; Reason = "updated" }
 }
 
@@ -2055,7 +2426,7 @@ function Set-MkxpPreloadScriptBefore([string]$Path, [string]$ScriptName, [string
         $replacement = $lines -join [Environment]::NewLine
         $updated = [regex]::Replace($content, '"preloadScript"\s*:\s*\[(?s)(.*?)\]', $replacement, 1)
         if ($updated -eq $content) { return @{ Changed = $false; Reason = "no_changes" } }
-        [System.IO.File]::WriteAllText($Path, $updated, (New-Object System.Text.UTF8Encoding $false))
+        Write-Utf8FileAtomic $Path $updated
         return @{ Changed = $true; Reason = "updated" }
     }
     return @{ Changed = $false; Reason = "preloadScript_missing" }
@@ -2089,7 +2460,7 @@ function Set-MkxpPreloadScriptAfter([string]$Path, [string]$ScriptName, [string]
         $replacement = $lines -join [Environment]::NewLine
         $updated = [regex]::Replace($content, '"preloadScript"\s*:\s*\[(?s)(.*?)\]', $replacement, 1)
         if ($updated -eq $content) { return @{ Changed = $false; Reason = "no_changes" } }
-        [System.IO.File]::WriteAllText($Path, $updated, (New-Object System.Text.UTF8Encoding $false))
+        Write-Utf8FileAtomic $Path $updated
         return @{ Changed = $true; Reason = "updated" }
     }
     return @{ Changed = $false; Reason = "preloadScript_missing" }
@@ -2101,6 +2472,332 @@ using System.IO;
 using System.Text;
 using System.Collections.Generic;
 using System.IO.Compression;
+
+public class YuriRgssPatcher {
+    private const string SectionMarker = "PokeDebug Yuri RGSS bridge v1";
+
+    public static string ApplyPatch(string gameDir) {
+        string gameExe = Path.Combine(gameDir, "Game.exe");
+        if (!File.Exists(gameExe)) throw new Exception("Yuri Game.exe was not found.");
+
+        byte[] current = File.ReadAllBytes(gameExe);
+        if (ContainsAscii(current, SectionMarker)) {
+            ValidatePatchedImage(current);
+            return "already_patched";
+        }
+
+        string backupPath = gameExe + ".pokedebug.bak";
+        if (!File.Exists(backupPath)) File.Copy(gameExe, backupPath, true);
+        byte[] source = File.ReadAllBytes(backupPath);
+        if (ContainsAscii(source, SectionMarker)) {
+            throw new Exception("The Yuri backup already contains a PokeDebug bridge. Restore a clean Game.exe before retrying.");
+        }
+
+        byte[] patched = PatchImage(source);
+        ValidatePatchedImage(patched);
+        WriteAllBytesAtomic(gameExe, patched);
+        return "native_eval_bridge";
+    }
+
+    public static bool IsSupported(string gameExe) {
+        try {
+            if (!File.Exists(gameExe)) return false;
+            byte[] image = File.ReadAllBytes(gameExe);
+            if (ContainsAscii(image, SectionMarker)) return true;
+            PeInfo pe = ParsePe(image);
+            return FindHook(image, pe) >= 0 &&
+                   ContainsAscii(image, "Yuri RGSS Game Player") &&
+                   ContainsAscii(image, "RGSSGameMain");
+        } catch {
+            return false;
+        }
+    }
+
+    private static byte[] PatchImage(byte[] source) {
+        PeInfo pe = ParsePe(source);
+        if (pe.Machine != 0x014c || pe.OptionalMagic != 0x010b) {
+            throw new Exception("Yuri bridge currently requires a 32-bit PE/RGSS player.");
+        }
+
+        int hookOffset = FindHook(source, pe);
+        if (hookOffset < 0) {
+            throw new Exception("Compatible Yuri RGSSGameMain startup hook was not found in Game.exe.");
+        }
+
+        int sectionHeaderOffset = pe.SectionTableOffset + pe.NumberOfSections * 40;
+        if (sectionHeaderOffset + 40 > pe.SizeOfHeaders) {
+            throw new Exception("Game.exe has no safe PE header space for the Yuri bridge section.");
+        }
+
+        uint lastVirtualEnd = 0;
+        for (int i = 0; i < pe.Sections.Count; i++) {
+            PeSection section = pe.Sections[i];
+            uint span = Math.Max(section.VirtualSize, section.RawSize);
+            lastVirtualEnd = Math.Max(lastVirtualEnd, section.VirtualAddress + Align(span, pe.SectionAlignment));
+        }
+        uint newSectionRva = Align(lastVirtualEnd, pe.SectionAlignment);
+        uint newRawPointer = Align((uint)source.Length, pe.FileAlignment);
+
+        uint modulePointerVa = ReadU32(source, hookOffset - 4);
+        if (modulePointerVa < pe.ImageBase) throw new Exception("Invalid Yuri RGSS module pointer.");
+        uint modulePointerRva = modulePointerVa - pe.ImageBase;
+        int returnOffset = hookOffset + 8;
+        uint returnRva = RawToRva(pe, returnOffset);
+        uint hookRva = RawToRva(pe, hookOffset);
+
+        byte[] marker = Encoding.ASCII.GetBytes(SectionMarker + "\0");
+        int codeOffset = (int)Align((uint)marker.Length, 16);
+        const int codeLength = 58;
+        int evalNameOffset = (int)Align((uint)(codeOffset + codeLength), 16);
+        byte[] evalName = Encoding.ASCII.GetBytes("RGSSEval\0");
+        int rubyCodeOffset = (int)Align((uint)(evalNameOffset + evalName.Length), 16);
+        string rubyCode =
+            "begin;load(File.expand_path('pokedebug_yuri_bootstrap.rb',Dir.pwd));" +
+            "rescue Exception=>e;begin;File.open('developer_menu_errors.log','a')" +
+            "{|f|f.puts('[PokeDebug Yuri bridge] '+e.class.to_s+': '+e.message.to_s)};" +
+            "rescue Exception;end;end";
+        byte[] rubyBytes = Encoding.ASCII.GetBytes(rubyCode + "\0");
+        int virtualSize = rubyCodeOffset + rubyBytes.Length;
+        uint rawSize = Align((uint)virtualSize, pe.FileAlignment);
+
+        byte[] sectionData = new byte[rawSize];
+        Buffer.BlockCopy(marker, 0, sectionData, 0, marker.Length);
+        Buffer.BlockCopy(evalName, 0, sectionData, evalNameOffset, evalName.Length);
+        Buffer.BlockCopy(rubyBytes, 0, sectionData, rubyCodeOffset, rubyBytes.Length);
+
+        uint codeRva = newSectionRva + (uint)codeOffset;
+        uint evalNameRva = newSectionRva + (uint)evalNameOffset;
+        uint rubyCodeRva = newSectionRva + (uint)rubyCodeOffset;
+        List<byte> code = new List<byte>();
+        Emit(code, 0xff, 0xd3);                         // call ebx (GetProcAddress)
+        Emit(code, 0x8b, 0xf0);                         // mov esi,eax (RGSSGameMain)
+        Emit(code, 0x60);                               // pushad
+        Emit(code, 0xe8); EmitI32(code, 0);             // call next instruction
+        uint runtimeAddressRva = codeRva + (uint)code.Count;
+        Emit(code, 0x5d);                               // pop ebp
+        Emit(code, 0x81, 0xed); EmitU32(code, runtimeAddressRva); // ebp = image base
+        Emit(code, 0x8d, 0x85); EmitU32(code, evalNameRva);
+        Emit(code, 0x50);
+        Emit(code, 0xff, 0xb5); EmitU32(code, modulePointerRva);
+        Emit(code, 0xff, 0xd3);                         // resolve RGSSEval
+        Emit(code, 0x85, 0xc0);
+        Emit(code, 0x74); int skipDisplacement = code.Count; Emit(code, 0x00);
+        Emit(code, 0x8d, 0x8d); EmitU32(code, rubyCodeRva);
+        Emit(code, 0x51);
+        Emit(code, 0xff, 0xd0);                         // RGSSEval(rubyCode)
+        Emit(code, 0x83, 0xc4, 0x04);
+        int skipOffset = code.Count;
+        code[skipDisplacement] = checked((byte)(skipOffset - (skipDisplacement + 1)));
+        Emit(code, 0x61);                               // popad
+        Emit(code, 0x8d, 0x44, 0x24, 0x58);             // displaced original instruction
+        Emit(code, 0xe9);
+        int bridgeJumpNext = checked((int)(codeRva + (uint)code.Count + 4));
+        EmitI32(code, checked((int)returnRva - bridgeJumpNext));
+        if (code.Count != codeLength) throw new Exception("Internal Yuri bridge length validation failed.");
+        Buffer.BlockCopy(code.ToArray(), 0, sectionData, codeOffset, code.Count);
+
+        int patchedLength = checked((int)(newRawPointer + rawSize));
+        byte[] patched = new byte[patchedLength];
+        Buffer.BlockCopy(source, 0, patched, 0, source.Length);
+        Buffer.BlockCopy(sectionData, 0, patched, (int)newRawPointer, sectionData.Length);
+
+        byte[] name = Encoding.ASCII.GetBytes(".pdbg");
+        Buffer.BlockCopy(name, 0, patched, sectionHeaderOffset, name.Length);
+        WriteU32(patched, sectionHeaderOffset + 8, (uint)virtualSize);
+        WriteU32(patched, sectionHeaderOffset + 12, newSectionRva);
+        WriteU32(patched, sectionHeaderOffset + 16, rawSize);
+        WriteU32(patched, sectionHeaderOffset + 20, newRawPointer);
+        WriteU32(patched, sectionHeaderOffset + 36, 0x60000020);
+        WriteU16(patched, pe.PeOffset + 6, checked((ushort)(pe.NumberOfSections + 1)));
+        WriteU32(patched, pe.OptionalHeaderOffset + 56, Align(newSectionRva + (uint)virtualSize, pe.SectionAlignment));
+        WriteU32(patched, pe.OptionalHeaderOffset + 64, 0);
+
+        int jumpNextRva = checked((int)hookRva + 5);
+        patched[hookOffset] = 0xe9;
+        WriteI32(patched, hookOffset + 1, checked((int)codeRva - jumpNextRva));
+        patched[hookOffset + 5] = 0x90;
+        patched[hookOffset + 6] = 0x90;
+        patched[hookOffset + 7] = 0x90;
+        return patched;
+    }
+
+    private static int FindHook(byte[] image, PeInfo pe) {
+        int nameOffset = FindAscii(image, "RGSSGameMain\0");
+        if (nameOffset < 0) return -1;
+        uint nameVa = pe.ImageBase + RawToRva(pe, nameOffset);
+        byte[] nameVaBytes = BitConverter.GetBytes(nameVa);
+        int found = -1;
+        for (int i = 0; i <= image.Length - 19; i++) {
+            if (image[i] != 0x68 ||
+                image[i + 1] != nameVaBytes[0] || image[i + 2] != nameVaBytes[1] ||
+                image[i + 3] != nameVaBytes[2] || image[i + 4] != nameVaBytes[3] ||
+                image[i + 5] != 0xff || image[i + 6] != 0x35 ||
+                image[i + 11] != 0xff || image[i + 12] != 0xd3 ||
+                image[i + 13] != 0x8b || image[i + 14] != 0xf0 ||
+                image[i + 15] != 0x8d || image[i + 16] != 0x44 ||
+                image[i + 17] != 0x24 || image[i + 18] != 0x58) continue;
+            if (found >= 0) throw new Exception("Multiple Yuri RGSSGameMain startup hooks were found.");
+            found = i + 11;
+        }
+        return found;
+    }
+
+    private static void ValidatePatchedImage(byte[] image) {
+        PeInfo pe = ParsePe(image);
+        if (!ContainsAscii(image, SectionMarker)) throw new Exception("Yuri bridge marker is missing.");
+        bool sectionFound = false;
+        for (int i = 0; i < pe.Sections.Count; i++) {
+            if (pe.Sections[i].Name == ".pdbg") sectionFound = true;
+        }
+        if (!sectionFound) throw new Exception("Yuri .pdbg section validation failed.");
+    }
+
+    private static PeInfo ParsePe(byte[] image) {
+        if (image == null || image.Length < 512 || image[0] != (byte)'M' || image[1] != (byte)'Z') {
+            throw new Exception("Invalid Game.exe DOS header.");
+        }
+        int peOffset = checked((int)ReadU32(image, 0x3c));
+        if (peOffset < 0 || peOffset + 24 > image.Length ||
+            image[peOffset] != (byte)'P' || image[peOffset + 1] != (byte)'E' ||
+            image[peOffset + 2] != 0 || image[peOffset + 3] != 0) {
+            throw new Exception("Invalid Game.exe PE header.");
+        }
+        PeInfo pe = new PeInfo();
+        pe.PeOffset = peOffset;
+        pe.Machine = ReadU16(image, peOffset + 4);
+        pe.NumberOfSections = ReadU16(image, peOffset + 6);
+        int optionalSize = ReadU16(image, peOffset + 20);
+        pe.OptionalHeaderOffset = peOffset + 24;
+        pe.OptionalMagic = ReadU16(image, pe.OptionalHeaderOffset);
+        pe.ImageBase = ReadU32(image, pe.OptionalHeaderOffset + 28);
+        pe.SectionAlignment = ReadU32(image, pe.OptionalHeaderOffset + 32);
+        pe.FileAlignment = ReadU32(image, pe.OptionalHeaderOffset + 36);
+        pe.SizeOfHeaders = checked((int)ReadU32(image, pe.OptionalHeaderOffset + 60));
+        pe.SectionTableOffset = pe.OptionalHeaderOffset + optionalSize;
+        pe.Sections = new List<PeSection>();
+        for (int i = 0; i < pe.NumberOfSections; i++) {
+            int offset = pe.SectionTableOffset + i * 40;
+            if (offset + 40 > image.Length) throw new Exception("Truncated Game.exe section table.");
+            PeSection section = new PeSection();
+            int nameLength = 0;
+            while (nameLength < 8 && image[offset + nameLength] != 0) nameLength++;
+            section.Name = Encoding.ASCII.GetString(image, offset, nameLength);
+            section.VirtualSize = ReadU32(image, offset + 8);
+            section.VirtualAddress = ReadU32(image, offset + 12);
+            section.RawSize = ReadU32(image, offset + 16);
+            section.RawPointer = ReadU32(image, offset + 20);
+            pe.Sections.Add(section);
+        }
+        return pe;
+    }
+
+    private static uint RawToRva(PeInfo pe, int rawOffset) {
+        for (int i = 0; i < pe.Sections.Count; i++) {
+            PeSection section = pe.Sections[i];
+            if ((uint)rawOffset >= section.RawPointer && (uint)rawOffset < section.RawPointer + section.RawSize) {
+                return section.VirtualAddress + ((uint)rawOffset - section.RawPointer);
+            }
+        }
+        if (rawOffset >= 0 && rawOffset < pe.SizeOfHeaders) return (uint)rawOffset;
+        throw new Exception("Could not map Game.exe file offset to an RVA.");
+    }
+
+    private static int FindAscii(byte[] data, string value) {
+        byte[] needle = Encoding.ASCII.GetBytes(value);
+        for (int i = 0; i <= data.Length - needle.Length; i++) {
+            int j = 0;
+            while (j < needle.Length && data[i + j] == needle[j]) j++;
+            if (j == needle.Length) return i;
+        }
+        return -1;
+    }
+
+    private static bool ContainsAscii(byte[] data, string value) {
+        return FindAscii(data, value) >= 0;
+    }
+
+    private static uint Align(uint value, uint alignment) {
+        if (alignment == 0) throw new Exception("Invalid PE alignment.");
+        return checked((value + alignment - 1) / alignment * alignment);
+    }
+
+    private static ushort ReadU16(byte[] data, int offset) {
+        return BitConverter.ToUInt16(data, offset);
+    }
+
+    private static uint ReadU32(byte[] data, int offset) {
+        return BitConverter.ToUInt32(data, offset);
+    }
+
+    private static void WriteU16(byte[] data, int offset, ushort value) {
+        byte[] bytes = BitConverter.GetBytes(value);
+        Buffer.BlockCopy(bytes, 0, data, offset, bytes.Length);
+    }
+
+    private static void WriteU32(byte[] data, int offset, uint value) {
+        byte[] bytes = BitConverter.GetBytes(value);
+        Buffer.BlockCopy(bytes, 0, data, offset, bytes.Length);
+    }
+
+    private static void WriteI32(byte[] data, int offset, int value) {
+        byte[] bytes = BitConverter.GetBytes(value);
+        Buffer.BlockCopy(bytes, 0, data, offset, bytes.Length);
+    }
+
+    private static void Emit(List<byte> target, params byte[] values) {
+        target.AddRange(values);
+    }
+
+    private static void EmitU32(List<byte> target, uint value) {
+        target.AddRange(BitConverter.GetBytes(value));
+    }
+
+    private static void EmitI32(List<byte> target, int value) {
+        target.AddRange(BitConverter.GetBytes(value));
+    }
+
+    private static void WriteAllBytesAtomic(string path, byte[] data) {
+        string temporaryPath = path + ".pokedebug.tmp";
+        try {
+            File.WriteAllBytes(temporaryPath, data);
+            if (File.Exists(path)) {
+                string replaceBackup = path + ".pokedebug.replace.bak";
+                try {
+                    if (File.Exists(replaceBackup)) File.Delete(replaceBackup);
+                    File.Replace(temporaryPath, path, replaceBackup, true);
+                } finally {
+                    if (File.Exists(replaceBackup)) File.Delete(replaceBackup);
+                }
+            } else {
+                File.Move(temporaryPath, path);
+            }
+        } finally {
+            if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+        }
+    }
+
+    private sealed class PeInfo {
+        public int PeOffset;
+        public ushort Machine;
+        public ushort NumberOfSections;
+        public int OptionalHeaderOffset;
+        public ushort OptionalMagic;
+        public uint ImageBase;
+        public uint SectionAlignment;
+        public uint FileAlignment;
+        public int SizeOfHeaders;
+        public int SectionTableOffset;
+        public List<PeSection> Sections;
+    }
+
+    private sealed class PeSection {
+        public string Name;
+        public uint VirtualSize;
+        public uint VirtualAddress;
+        public uint RawSize;
+        public uint RawPointer;
+    }
+}
 
 public class RgssPatcher {
     public static string ApplyPatch(string gameDir) {
@@ -2132,11 +2829,15 @@ public class RgssPatcher {
     }
 
     private static void PatchRawFile(string path) {
-        byte[] data = File.ReadAllBytes(path);
-        byte[] newScripts = InjectPayload(data, Path.GetDirectoryName(Path.GetDirectoryName(path)));
         string backupPath = BackupPathFor(path);
         if (!File.Exists(backupPath)) File.Copy(path, backupPath, true);
-        File.WriteAllBytes(path, newScripts);
+        // Rebuild from the immutable pre-PokeDebug backup on every run. Older
+        // installers patched the already-patched file and could choose a new
+        // compressed script on every retry.
+        byte[] source = File.ReadAllBytes(backupPath);
+        byte[] newScripts = InjectPayload(source, Path.GetDirectoryName(Path.GetDirectoryName(path)));
+        ValidatePatchedScripts(newScripts);
+        WriteAllBytesAtomic(path, newScripts);
     }
 
     private static void ExportPatchedRawFromArchive(string archivePath, string rawRxdata) {
@@ -2145,7 +2846,8 @@ public class RgssPatcher {
         string backupPath = BackupPathFor(rawRxdata);
         if (File.Exists(rawRxdata) && !File.Exists(backupPath)) File.Copy(rawRxdata, backupPath, true);
         byte[] newScripts = InjectPayload(ExtractScriptsFromArchive(archivePath), Path.GetDirectoryName(archivePath));
-        File.WriteAllBytes(rawRxdata, newScripts);
+        ValidatePatchedScripts(newScripts);
+        WriteAllBytesAtomic(rawRxdata, newScripts);
     }
 
     private static void PatchArchiveInPlace(string archivePath, string gameDir) {
@@ -2153,10 +2855,13 @@ public class RgssPatcher {
         if (!File.Exists(bakPath)) File.Copy(archivePath, bakPath);
         byte[] originalScripts = ExtractScriptsFromArchive(archivePath);
         byte[] newScripts = InjectPayload(originalScripts, gameDir);
+        ValidatePatchedScripts(newScripts);
+        string temporaryPath = archivePath + ".pokedebug.tmp";
 
+        try {
         using (FileStream fs = new FileStream(bakPath, FileMode.Open, FileAccess.Read))
         using (BinaryReader br = new BinaryReader(fs))
-        using (FileStream outFs = new FileStream(archivePath, FileMode.Create, FileAccess.Write))
+        using (FileStream outFs = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write))
         using (BinaryWriter bw = new BinaryWriter(outFs)) {
             byte[] magic = br.ReadBytes(8);
             bw.Write(magic);
@@ -2216,6 +2921,10 @@ public class RgssPatcher {
                 }
             }
         }
+        ReplaceFileAtomic(temporaryPath, archivePath);
+        } finally {
+            if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+        }
     }
 
     private static byte[] ExtractScriptsFromArchive(string archivePath) {
@@ -2273,6 +2982,11 @@ public class RgssPatcher {
     }
 
     private static byte[] InjectPayload(byte[] original, string gameDir) {
+        int existingMarkers = CountBootstrapMarkers(original);
+        if (existingMarkers == 1) return MigrateExistingBootstrapPath(original);
+        if (existingMarkers > 1) {
+            throw new Exception("Multiple PokeDebug bootstraps were found. Restore the .pokedebug.bak file before retrying.");
+        }
         List<ScriptBlockCandidate> candidates = FindInjectableScriptBlocks(original);
         if (candidates.Count == 0) throw new Exception("Failed to locate a valid startup script block.");
 
@@ -2285,7 +2999,7 @@ public class RgssPatcher {
                 int zlibStart = candidate.StartOffset;
                 int scriptEnd = candidate.EndOffset;
                 string rubyCode = candidate.Code;
-                string patchedCode = rubyCode.Contains("animated_sprites.rb") || rubyCode.Contains("animated_sprites_compat.rb") ? rubyCode : inject + rubyCode;
+                string patchedCode = inject + rubyCode;
                 byte[] newZlib = Compress(patchedCode);
 
                 bw.Write(original, cursor, zlibStart - cursor);
@@ -2295,49 +3009,119 @@ public class RgssPatcher {
                 cursor = scriptEnd;
             }
             bw.Write(original, cursor, original.Length - cursor);
-            return ms.ToArray();
+            byte[] result = ms.ToArray();
+            ValidatePatchedScripts(result);
+            return result;
+        }
+    }
+
+    private static byte[] MigrateExistingBootstrapPath(byte[] original) {
+        List<ScriptBlockCandidate> candidates = FindInjectableScriptBlocks(original);
+        const string marker = "unless defined?(POKEDEBUG_RUNTIME_LOADED)";
+        string legacyPath = "Plugins/" + "God" + " Mode/" + "god" + "_mode.rb";
+        const string currentPath = "Plugins/PokeDebug/pokedebug_menu.rb";
+        ScriptBlockCandidate target = null;
+        foreach (ScriptBlockCandidate candidate in candidates) {
+            if (candidate.Code.Contains(marker)) {
+                target = candidate;
+                break;
+            }
+        }
+        if (target == null) return original;
+        string migratedCode = target.Code.Replace(legacyPath, currentPath);
+        if (migratedCode == target.Code) return original;
+        byte[] newZlib = Compress(migratedCode);
+        using (MemoryStream ms = new MemoryStream())
+        using (BinaryWriter bw = new BinaryWriter(ms)) {
+            bw.Write(original, 0, target.StartOffset);
+            bw.Write((byte)'"');
+            WriteInt(bw, newZlib.Length);
+            bw.Write(newZlib);
+            bw.Write(original, target.EndOffset, original.Length - target.EndOffset);
+            byte[] result = ms.ToArray();
+            ValidatePatchedScripts(result);
+            return result;
+        }
+    }
+
+    private static int CountBootstrapMarkers(byte[] scripts) {
+        const string marker = "unless defined?(POKEDEBUG_RUNTIME_LOADED)";
+        int count = 0;
+        for (int i = 0; i < scripts.Length - 8; i++) {
+            if (scripts[i] != 0x22) continue;
+            ScriptBlockCandidate candidate = TryReadScriptBlock(scripts, i);
+            if (candidate == null) continue;
+            int offset = 0;
+            while ((offset = candidate.Code.IndexOf(marker, offset, StringComparison.Ordinal)) >= 0) {
+                count++;
+                offset += marker.Length;
+            }
+            i = Math.Max(i, candidate.EndOffset - 1);
+        }
+        return count;
+    }
+
+    private static void ValidatePatchedScripts(byte[] scripts) {
+        int markers = CountBootstrapMarkers(scripts);
+        if (markers != 1) {
+            throw new Exception("Patched Scripts data validation failed: expected one PokeDebug bootstrap, found " + markers + ".");
+        }
+    }
+
+    private static void WriteAllBytesAtomic(string path, byte[] data) {
+        string temporaryPath = path + ".pokedebug.tmp";
+        try {
+            File.WriteAllBytes(temporaryPath, data);
+            ReplaceFileAtomic(temporaryPath, path);
+        } finally {
+            if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+        }
+    }
+
+    private static void ReplaceFileAtomic(string temporaryPath, string destinationPath) {
+        if (!File.Exists(destinationPath)) {
+            File.Move(temporaryPath, destinationPath);
+            return;
+        }
+        string replaceBackup = destinationPath + ".pokedebug.replace.bak";
+        try {
+            if (File.Exists(replaceBackup)) File.Delete(replaceBackup);
+            File.Replace(temporaryPath, destinationPath, replaceBackup, true);
+        } finally {
+            if (File.Exists(replaceBackup)) File.Delete(replaceBackup);
         }
     }
 
     private static string EscapeRubySingleQuotedPath(string path) {
         if (string.IsNullOrEmpty(path)) return "";
-        return path.Replace("\\", "/").Replace("'", "\\\\'");
+        return path.Replace("\\", "/").Replace("'", "\\'");
     }
 
     private static string BuildBootstrapScript(string gameDir) {
-        string pluginPath = EscapeRubySingleQuotedPath(Path.Combine(gameDir, "Plugins", "God Mode", "god_mode.rb"));
-        string animatedRootPath = EscapeRubySingleQuotedPath(Path.Combine(gameDir, "animated_sprites.rb"));
+        string pluginPath = EscapeRubySingleQuotedPath(Path.Combine(gameDir, "Plugins", "PokeDebug", "pokedebug_menu.rb"));
         string logPath = EscapeRubySingleQuotedPath(Path.Combine(gameDir, "developer_menu_errors.log"));
         return "begin\r\n" +
                "  unless defined?(POKEDEBUG_RUNTIME_LOADED) && POKEDEBUG_RUNTIME_LOADED\r\n" +
                "    POKEDEBUG_RUNTIME_LOADED = true\r\n" +
                "    log_path = '" + logPath + "'\r\n" +
                "    begin\r\n" +
-               "      File.open(log_path, 'a') {|f| f.puts '[PokeDebug/Sprites RGSS bootstrap reached]' }\r\n" +
+               "      File.open(log_path, 'a') {|f| f.puts '[PokeDebug RGSS bootstrap reached]' }\r\n" +
                "    rescue\r\n" +
                "    end\r\n" +
                "    candidates = []\r\n" +
                "    candidates << '" + pluginPath + "'\r\n" +
-               "    candidates << File.expand_path('Plugins/God Mode/god_mode.rb', Dir.pwd)\r\n" +
+               "    candidates << File.expand_path('Plugins/PokeDebug/pokedebug_menu.rb', Dir.pwd)\r\n" +
                "    begin\r\n" +
-               "      candidates << File.expand_path('Plugins/God Mode/god_mode.rb', File.dirname($0)) if $0\r\n" +
+               "      candidates << File.expand_path('Plugins/PokeDebug/pokedebug_menu.rb', File.dirname($0)) if $0\r\n" +
                "    rescue\r\n" +
                "    end\r\n" +
                "    begin\r\n" +
-               "      candidates << File.expand_path('Game/Plugins/God Mode/god_mode.rb', File.dirname($0)) if $0\r\n" +
+               "      candidates << File.expand_path('Game/Plugins/PokeDebug/pokedebug_menu.rb', File.dirname($0)) if $0\r\n" +
                "    rescue\r\n" +
                "    end\r\n" +
                "    begin\r\n" +
-               "      candidates << File.expand_path('../Plugins/God Mode/god_mode.rb', Dir.pwd)\r\n" +
+               "      candidates << File.expand_path('../Plugins/PokeDebug/pokedebug_menu.rb', Dir.pwd)\r\n" +
                "    rescue\r\n" +
-               "    end\r\n" +
-               "    animated_candidates = []\r\n" +
-               "    animated_candidates << '" + animatedRootPath + "'\r\n" +
-               "    animated_candidates << File.expand_path('animated_sprites.rb', Dir.pwd)\r\n" +
-               "    animated_path = animated_candidates.compact.find { |entry| entry && File.file?(entry) }\r\n" +
-               "    if animated_path && !animated_path.empty?\r\n" +
-               "      animated_code = File.open(animated_path, 'rb') { |f| f.read }\r\n" +
-               "      eval(animated_code, binding, animated_path) if animated_code\r\n" +
                "    end\r\n" +
                "    path = candidates.compact.find { |entry| entry && File.file?(entry) }\r\n" +
                "    if path && !path.empty?\r\n" +
@@ -2401,7 +3185,10 @@ public class RgssPatcher {
             string rubyCode = Decompress(zlibData);
             if (string.IsNullOrEmpty(rubyCode)) return null;
             int score = ScoreScriptBlock(original, startOffset, rubyCode);
-            if (score < 1) return null;
+            // Keep an already injected block discoverable even though the
+            // The installed PokeDebug menu score penalty intentionally excludes it as a new
+            // injection target.
+            if (score < 1 && !rubyCode.Contains("POKEDEBUG_RUNTIME_LOADED")) return null;
             return new ScriptBlockCandidate {
                 StartOffset = startOffset,
                 EndOffset = ptr + len,
@@ -2428,7 +3215,7 @@ public class RgssPatcher {
         if (lower.Contains("class scene_")) score += 20;
         if (lower.Contains("module ")) score += 10;
         if (lower.Contains("def ")) score += 10;
-        if (lower.Contains("god_mode.rb")) score -= 500;
+        if (lower.Contains("pokedebug_menu.rb")) score -= 500;
 
         int previewStart = Math.Max(0, startOffset - 96);
         int previewLength = Math.Min(128, startOffset - previewStart);
@@ -2547,23 +3334,14 @@ try {
                         Print-Header
                         Show-Section "Indigo Pokemon Pack"
                         Show-CardLine (Get-Msg "Game Directory" "Diretorio do Jogo" "Directorio del Juego") $ResolvedProbeDir "Gray"
-                        if (-not [string]::IsNullOrWhiteSpace($DefaultIndigoPokemonZipUrl)) {
-                            Show-CardLine "Default URL" $DefaultIndigoPokemonZipUrl "DarkGray"
-                        }
                         Write-Host ""
                         Write-Host "             " -NoNewline
-                        Write-Host (Get-Msg "Tip: paste GitHub/Drive zip URLs separated by ;" "Dica: cole URLs zip do GitHub/Drive separadas por ;" "Consejo: pega URLs zip de GitHub/Drive separadas por ;") -ForegroundColor DarkGray
-                        Write-Host ""
-                        Write-Host "             " -NoNewline
-                        $inputUrl = (Read-Host (Get-Msg "Zip URL(s) or file path(s) (ENTER uses default)" "URL(s) zip ou caminho(s) de arquivo (ENTER usa padrao)" "URL(s) zip o ruta(s) de archivo (ENTER usa predeterminado)")).Trim()
+                        $inputUrl = (Read-Host (Get-Msg "Zip URL(s) or path(s); ENTER uses default" "URL(s) zip ou caminho(s); ENTER usa o padrao" "URL(s) zip o ruta(s); ENTER usa el predeterminado")).Trim()
                         $zipUrl = if ([string]::IsNullOrWhiteSpace($inputUrl)) { $DefaultIndigoPokemonZipUrl } else { $inputUrl }
-                        Write-Host ""
                         Show-MenuItem "1" (Get-Msg "Backup first" "Fazer backup antes" "Hacer copia primero") (Get-Msg "Recommended" "Recomendado" "Recomendado")
-                        Show-MenuItem "2" (Get-Msg "Skip backup" "Pular backup" "Omitir copia") (Get-Msg "Install faster, overwrite directly" "Instala mais rapido, sobrescreve direto" "Instala mas rapido, sobrescribe directo")
-                        Show-KeyboardPrompt "1,2" (Get-Msg "Backup current Graphics\\AnimatedBattlers?" "Fazer backup do Graphics\\AnimatedBattlers atual?" "Hacer copia de Graphics\\AnimatedBattlers actual?")
+                        Show-MenuItem "2" (Get-Msg "Skip backup" "Pular backup" "Omitir copia") ""
                         $backupChoice = (Read-MenuChoice " > " @("1","2") "1").Trim()
-                        $skipIndigoBackup = ($backupChoice -eq "2")
-                        [void](Install-IndigoPokemonPack -ResolvedGameDir $ResolvedProbeDir -ZipUrl $zipUrl -SkipBackup $skipIndigoBackup)
+                        [void](Install-IndigoPokemonPack -ResolvedGameDir $ResolvedProbeDir -ZipUrl $zipUrl -SkipBackup ($backupChoice -eq "2"))
                         [void](Write-SpritesReportFile $ResolvedProbeDir)
                     } catch {
                         Add-Warning ((Get-Msg "[!] Indigo pack install failed: {0}" "[!] Falha ao instalar pack Indigo: {0}" "[!] Error al instalar pack Indigo: {0}") -f $_.Exception.Message)
@@ -2607,7 +3385,10 @@ try {
                 Show-MasDiagnosticsAnimation $Diagnostics
 
                 # Check if already installed
-                $alreadyInstalled = (Test-Path (Join-Path $ResolvedProbeDir "Plugins\God Mode\god_mode.rb") -PathType Leaf) -or
+                $legacyPluginPath = Join-Path $ResolvedProbeDir (("Plugins\{0} {1}\{2}_mode.rb" -f "God", "Mode", "god"))
+                $alreadyInstalled = (Test-Path (Join-Path $ResolvedProbeDir "Plugins\PokeDebug\pokedebug_menu.rb") -PathType Leaf) -or
+                    (Test-Path $legacyPluginPath -PathType Leaf) -or
+                    (Test-Path (Join-Path $ResolvedProbeDir "preload_menu.rb") -PathType Leaf) -or
                     (Test-Path (Join-Path $ResolvedProbeDir "preload_gm.rb") -PathType Leaf)
                 if ($alreadyInstalled) {
                     $patchAnyway = Show-AlreadyInstalledPrompt
@@ -2633,8 +3414,16 @@ try {
         }
     }
 
-    $GameDir = (Resolve-Path $GameDir -ErrorAction SilentlyContinue).Path
-    if ([string]::IsNullOrEmpty($GameDir)) { $GameDir = (Get-Location).Path }
+    $resolvedGameDir = Resolve-Path -LiteralPath $GameDir -ErrorAction SilentlyContinue
+    if ($null -eq $resolvedGameDir) {
+        throw ((Get-Msg "Game directory does not exist: {0}" "O diretorio do jogo nao existe: {0}" "El directorio del juego no existe: {0}") -f $GameDir)
+    }
+    $GameDir = $resolvedGameDir.Path
+    $windowsRoot = [System.IO.Path]::GetFullPath($env:windir).TrimEnd('\')
+    $normalizedGameDir = [System.IO.Path]::GetFullPath($GameDir).TrimEnd('\')
+    if ($script:GameDirWasDefault -and ($normalizedGameDir.Equals($windowsRoot, [System.StringComparison]::OrdinalIgnoreCase) -or $normalizedGameDir.StartsWith($windowsRoot + '\', [System.StringComparison]::OrdinalIgnoreCase))) {
+        throw (Get-Msg "Safety check: the installer resolved the game directory inside Windows. Move the CMD to the game folder and run it again." "Verificacao de seguranca: o instalador resolveu o diretorio do jogo dentro do Windows. Mova o CMD para a pasta do jogo e execute novamente." "Comprobacion de seguridad: el instalador resolvio el directorio del juego dentro de Windows. Mueve el CMD a la carpeta del juego y ejecutalo nuevamente.")
+    }
     $InstallReport.GameDir = $GameDir
     $InstallReport.DryRun = $DryRun.IsPresent
     $InstallReport.Uninstall = $Uninstall.IsPresent
@@ -2675,6 +3464,29 @@ try {
         exit 0
     }
 
+    if ($Diagnostics.HasPsdk) {
+        $runningGames = @(Get-RunningGameProcesses $GameDir)
+        if (-not $DryRun -and $runningGames.Count -gt 0) {
+            $runningNames = ($runningGames | ForEach-Object { "{0} (PID {1})" -f $_.ProcessName, $_.Id }) -join ", "
+            throw ((Get-Msg "Close the game before installing PokeDebug: {0}" "Feche o jogo antes de instalar o PokeDebug: {0}" "Cierra el juego antes de instalar PokeDebug: {0}") -f $runningNames)
+        }
+        if ($DryRun) {
+            Log (Get-Msg "[*] Dry-run mode enabled. PSDK files will be validated but not changed." "[*] Modo dry-run ativado. Os arquivos PSDK serao validados, mas nao alterados." "[*] Modo dry-run activado. Los archivos PSDK se validaran, pero no se modificaran.") "Yellow"
+        }
+        Show-Section (Get-Msg "PSDK Injection" "Injecao PSDK" "Inyeccion PSDK")
+        Run-PsdkInstall $GameDir $lang $MenuKey $WtwKey $HealKey
+        Show-CardLine "PSDK version" $Diagnostics.PsdkVersion "Gray"
+        Show-CardLine "Game.rb backup" (Format-State (Test-Path -LiteralPath (Join-Path $GameDir "Game.rb.pokedebug.bak") -PathType Leaf)) "Gray"
+        Show-CardLine "Compiled scripts changed" "OFF" "Green"
+        Show-CardLine "Save files changed" "OFF" "Green"
+        if ($DryRun) {
+            Log (Get-Msg "[+] PSDK dry-run completed successfully." "[+] Dry-run PSDK concluido com sucesso." "[+] Dry-run PSDK completado correctamente.") "Green"
+        } else {
+            Log (Get-Msg "[+] PSDK support installed successfully." "[+] Suporte PSDK instalado com sucesso." "[+] Compatibilidad PSDK instalada correctamente.") "Green"
+        }
+        exit 0
+    }
+
     $DataDir = Join-Path $GameDir "Data"
     $rgssFiles = Get-ChildItem -Path $GameDir -Filter "*.rgss*a*" -ErrorAction SilentlyContinue
     if (-not (Test-Path $DataDir -PathType Container) -and $rgssFiles.Count -eq 0) {
@@ -2687,24 +3499,48 @@ try {
         if ($enigmaInfo.Packed -and $null -ne $packedExe) {
             $ans = if ($NonInteractive) { "1" } else { Show-EnigmaPrompt }
             if ($ans -eq "1") {
+                $runningGames = @(Get-RunningGameProcesses $GameDir)
+                if ($runningGames.Count -gt 0) {
+                    $runningNames = ($runningGames | ForEach-Object { "{0} (PID {1})" -f $_.ProcessName, $_.Id }) -join ", "
+                    throw ((Get-Msg "Close the game before unpacking it: {0}" "Feche o jogo antes de descompacta-lo: {0}" "Cierra el juego antes de desempaquetarlo: {0}") -f $runningNames)
+                }
                 $evbExe = Join-Path $env:TEMP "evbunpack.exe"
                 if (-not (Test-Path $evbExe)) {
                     Log (Get-Msg "Downloading Enigma unpacker..." "Baixando o desempacotador do Enigma..." "Descargando el desempaquetador de Enigma...") "Cyan"
                     Invoke-WebRequest -Uri "https://github.com/mos9527/evbunpack/releases/download/0.2.6/evbunpack.exe" -OutFile $evbExe
                 }
                 $unpackedDir = Join-Path $GameDir "Unpacked_Game"
-                if (-not (Test-Path $unpackedDir)) { New-Item -ItemType Directory -Path $unpackedDir | Out-Null }
-                Log (Get-Msg "Unpacking... This may take a minute." "Descompactando... Isso pode levar um minuto." "Descomprimiendo... Esto puede tardar un minuto.") "Cyan"
-                
-                Start-Process -FilePath $evbExe -ArgumentList "`"$($packedExe.FullName)`" `"$unpackedDir`"" -Wait -NoNewWindow
-                
-                Get-ChildItem -Path $GameDir -Directory | Where-Object { $_.Name -ne "Unpacked_Game" } | ForEach-Object {
-                    Copy-Item -Path $_.FullName -Destination (Join-Path $unpackedDir $_.Name) -Recurse -Force
+                $existingUnpacked = Get-ChildItem -LiteralPath $GameDir -Directory -Filter "Unpacked_Game*" -ErrorAction SilentlyContinue |
+                    Where-Object { (Test-Path (Join-Path $_.FullName "Data") -PathType Container) -or @(Get-ChildItem -LiteralPath $_.FullName -Filter "*.rgss*a*" -File -ErrorAction SilentlyContinue).Count -gt 0 } |
+                    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+                if ($existingUnpacked) {
+                    $unpackedDir = $existingUnpacked.FullName
+                    Log (Get-Msg "Using the previously validated unpacked folder." "Usando a pasta descompactada validada anteriormente." "Usando la carpeta desempaquetada validada anteriormente.") "Green"
+                } else {
+                    if (Test-Path -LiteralPath $unpackedDir) {
+                        $unpackedDir = Join-Path $GameDir ("Unpacked_Game_{0}" -f (Get-Date -Format "yyyyMMdd_HHmmss"))
+                    }
+                    New-Item -ItemType Directory -Path $unpackedDir -Force | Out-Null
+                    Log (Get-Msg "Unpacking... This may take a minute." "Descompactando... Isso pode levar um minuto." "Descomprimiendo... Esto puede tardar un minuto.") "Cyan"
+
+                    $unpackProcess = Start-Process -FilePath $evbExe -ArgumentList "`"$($packedExe.FullName)`" `"$unpackedDir`"" -WorkingDirectory $GameDir -Wait -PassThru -NoNewWindow
+                    if ($unpackProcess.ExitCode -ne 0) {
+                        throw ((Get-Msg "Enigma unpacker failed with exit code {0}. No game files were modified." "O descompactador Enigma falhou com o codigo {0}. Nenhum arquivo do jogo foi modificado." "El desempaquetador Enigma fallo con el codigo {0}. No se modificaron archivos del juego.") -f $unpackProcess.ExitCode)
+                    }
+
+                    Get-ChildItem -Path $GameDir -Directory | Where-Object { $_.FullName -ne $unpackedDir -and $_.Name -notlike "Unpacked_Game*" } | ForEach-Object {
+                        Copy-Item -Path $_.FullName -Destination (Join-Path $unpackedDir $_.Name) -Recurse -Force
+                    }
                 }
-                
+
+                $unpackedArchive = @(Get-ChildItem -LiteralPath $unpackedDir -Filter "*.rgss*a*" -File -ErrorAction SilentlyContinue)
+                if (-not (Test-Path (Join-Path $unpackedDir "Data") -PathType Container) -and $unpackedArchive.Count -eq 0) {
+                    throw (Get-Msg "Enigma extraction finished without a Data folder or RGSS archive. Installation was stopped safely." "A extracao Enigma terminou sem pasta Data ou arquivo RGSS. A instalacao foi interrompida com seguranca." "La extraccion Enigma termino sin carpeta Data ni archivo RGSS. La instalacion se detuvo de forma segura.")
+                }
                 Log (Get-Msg "Extraction completed. Restarting in the unpacked folder..." "Extracao concluida. Reiniciando na pasta descompactada..." "Extraccion completada. Reiniciando en la carpeta desempaquetada...") "Green"
                 Set-Location $unpackedDir
-                $GameDir = $unpackedDir
+                $GameDir = (Resolve-Path -LiteralPath $unpackedDir).Path
+                $Diagnostics = Get-InstallDiagnostics $GameDir
             } else {
                 Log (Get-Msg "Extraction aborted." "Extracao cancelada." "Extraccion cancelada.") "Red"
                 exit 1
@@ -2739,39 +3575,53 @@ try {
     $forceRgssOnly = $InstallReport.PatchMode -eq "RGSS"
     $forceBothPatch = $InstallReport.PatchMode -eq "BOTH"
     
-    $PluginDir = Join-Path $GameDir "Plugins\God Mode"
-    $SourceGodMode = Join-Path $PSScriptRoot "god_mode_source.rb"
-    $DestGodMode   = Join-Path $PluginDir "god_mode.rb"
-    $DestPreload   = Join-Path $GameDir "preload_gm.rb"
+    $PluginDir = Join-Path $GameDir "Plugins\PokeDebug"
+    $LegacyPluginDir = Join-Path $GameDir ("Plugins\{0} {1}" -f "God", "Mode")
+    $SourcePokeDebugMenu = Join-Path $PSScriptRoot "pokedebug_menu.rb"
+    $DestPokeDebugMenu = Join-Path $PluginDir "pokedebug_menu.rb"
+    $DestPreload   = Join-Path $GameDir "preload_menu.rb"
+    $LegacyDestPreload = Join-Path $GameDir "preload_gm.rb"
+    $SourceYuriBootstrap = Join-Path $PSScriptRoot "yuri_bootstrap.rb"
+    $DestYuriBootstrap = Join-Path $GameDir "pokedebug_yuri_bootstrap.rb"
+    $SourcePokeFallenCompat = Join-Path $PSScriptRoot "pokefallen_compat.rb"
+    $DestPokeFallenCompat = Join-Path $GameDir "pokefallen_compat.rb"
+    $YuriGameExe = Join-Path $GameDir "Game.exe"
     $JsonPath = Join-Path $GameDir "mkxp.json"
     $rxData = Join-Path $GameDir "Data\Scripts.rxdata"
     $iniPath = Get-GameIniPath $GameDir
     $manifestPath = Join-Path $GameDir "PokeDebug_Install_Manifest.json"
     $rgssFiles = @(Get-ChildItem -Path $GameDir -Filter "*.rgss*a*" -ErrorAction SilentlyContinue)
-    $transactionPaths = @($PluginDir, $DestPreload, $JsonPath, $rxData, $iniPath, $manifestPath, (Get-InstallReportPath $GameDir))
+    $injectionPlan = Resolve-InjectionPlan $Diagnostics $InstallReport.PatchMode
+    $transactionPaths = @($PluginDir, $LegacyPluginDir, $DestPreload, $LegacyDestPreload, $DestYuriBootstrap, $YuriGameExe, ($YuriGameExe + ".pokedebug.bak"), $JsonPath, $rxData, $iniPath, $manifestPath, (Get-InstallReportPath $GameDir))
+    if (Test-Path -LiteralPath $SourcePokeFallenCompat -PathType Leaf) {
+        $transactionPaths += $DestPokeFallenCompat
+    }
     $transactionPaths += @($rgssFiles | ForEach-Object { $_.FullName })
     $script:InstallTransaction = Start-InstallTransaction $transactionPaths
     if (-not $DryRun -and -not (Test-Path $PluginDir)) { New-Item -ItemType Directory -Path $PluginDir -Force | Out-Null }
 
-    if (-not (Test-Path $SourceGodMode -PathType Leaf)) {
-        throw (Get-Msg "Could not find god_mode_source.rb!" "Arquivo god_mode_source.rb nao encontrado!" "No se encontro god_mode_source.rb!")
+    if (-not (Test-Path $SourcePokeDebugMenu -PathType Leaf)) {
+        throw (Get-Msg "Could not find pokedebug_menu.rb!" "Arquivo pokedebug_menu.rb nao encontrado!" "No se encontro pokedebug_menu.rb!")
     }
 
-    $godModeContent = [System.IO.File]::ReadAllText($SourceGodMode, [System.Text.Encoding]::UTF8)
-    $godModeContent = [regex]::Replace($godModeContent, "LANG = '.*?'", "LANG = '$($lang.ToLower())'", 1)
-    $godModeContent = [regex]::Replace($godModeContent, "MENU_HOTKEY = '.*?'", "MENU_HOTKEY = '$($MenuKey.Trim().ToUpper())'", 1)
-    $godModeContent = [regex]::Replace($godModeContent, "WTW_HOTKEY = '.*?'", "WTW_HOTKEY = '$($WtwKey.Trim().ToUpper())'", 1)
-    $godModeContent = [regex]::Replace($godModeContent, "HEAL_HOTKEY = '.*?'", "HEAL_HOTKEY = '$($HealKey.Trim().ToUpper())'", 1)
-    $pluginVersionMatch = [regex]::Match($godModeContent, 'VERSION\s*=\s*[''"]([^''"]+)[''"]')
+    $pokedebugMenuContent = [System.IO.File]::ReadAllText($SourcePokeDebugMenu, [System.Text.Encoding]::UTF8)
+    $pokedebugMenuContent = [regex]::Replace($pokedebugMenuContent, "LANG = '.*?'", "LANG = '$($lang.ToLower())'", 1)
+    $pokedebugMenuContent = [regex]::Replace($pokedebugMenuContent, "MENU_HOTKEY = '.*?'", "MENU_HOTKEY = '$($MenuKey.Trim().ToUpper())'", 1)
+    $pokedebugMenuContent = [regex]::Replace($pokedebugMenuContent, "WTW_HOTKEY = '.*?'", "WTW_HOTKEY = '$($WtwKey.Trim().ToUpper())'", 1)
+    $pokedebugMenuContent = [regex]::Replace($pokedebugMenuContent, "HEAL_HOTKEY = '.*?'", "HEAL_HOTKEY = '$($HealKey.Trim().ToUpper())'", 1)
+    $pluginVersionMatch = [regex]::Match($pokedebugMenuContent, 'VERSION\s*=\s*[''"]([^''"]+)[''"]')
     if (-not $pluginVersionMatch.Success) { throw "Could not determine DeveloperMenu version." }
     $pluginVersion = $pluginVersionMatch.Groups[1].Value
     
     if (-not $DryRun) {
-        Write-Utf8FileAtomic $DestGodMode $godModeContent
+        Write-Utf8FileAtomic $DestPokeDebugMenu $pokedebugMenuContent
+        if (Test-Path -LiteralPath $SourcePokeFallenCompat -PathType Leaf) {
+            Copy-Item -LiteralPath $SourcePokeFallenCompat -Destination $DestPokeFallenCompat -Force
+        }
     }
-    $InstallReport.GodModeCopied = $true
+    $InstallReport.PokeDebugMenuCopied = $true
 
-    $SourcePreload = Join-Path $PSScriptRoot "preload_gm.rb"
+    $SourcePreload = Join-Path $PSScriptRoot "preload_menu.rb"
     $preloadContent = $null
     if (Get-Variable preloadBase64 -ErrorAction SilentlyContinue) {
         $preloadContent = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($preloadBase64))
@@ -2780,16 +3630,16 @@ try {
     }
     if (-not [string]::IsNullOrWhiteSpace($preloadContent)) {
         $pluginSha256 = ""
-        if (-not $DryRun) { $pluginSha256 = Get-Sha256Hex $DestGodMode }
+        if (-not $DryRun) { $pluginSha256 = Get-Sha256Hex $DestPokeDebugMenu }
         if ([string]::IsNullOrWhiteSpace($pluginSha256)) {
             $sha = [System.Security.Cryptography.SHA256]::Create()
             try {
-                $bytes = [System.Text.Encoding]::UTF8.GetBytes($godModeContent)
+                $bytes = [System.Text.Encoding]::UTF8.GetBytes($pokedebugMenuContent)
                 $pluginSha256 = -join ($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString("x2") })
             } finally { $sha.Dispose() }
         }
-        $preloadContent = [regex]::Replace($preloadContent, "GM_TRY_ENABLE_NATIVE_DEBUG = (true|false)", ("GM_TRY_ENABLE_NATIVE_DEBUG = " + $EnableNativeDebugBootstrap.ToString().ToLowerInvariant()), 1)
-        $preloadContent = [regex]::Replace($preloadContent, "GM_TRY_DISABLE_COMPILER = (true|false)", ("GM_TRY_DISABLE_COMPILER = " + $DisableCompilerBootstrap.ToString().ToLowerInvariant()), 1)
+        $preloadContent = [regex]::Replace($preloadContent, "POKEDEBUG_TRY_ENABLE_NATIVE_DEBUG = (true|false)", ("POKEDEBUG_TRY_ENABLE_NATIVE_DEBUG = " + $EnableNativeDebugBootstrap.ToString().ToLowerInvariant()), 1)
+        $preloadContent = [regex]::Replace($preloadContent, "POKEDEBUG_TRY_DISABLE_COMPILER = (true|false)", ("POKEDEBUG_TRY_DISABLE_COMPILER = " + $DisableCompilerBootstrap.ToString().ToLowerInvariant()), 1)
         $preloadContent = [regex]::Replace($preloadContent, 'EXPECTED_PLUGIN_SHA256 = "[^"]*"', ('EXPECTED_PLUGIN_SHA256 = "' + $pluginSha256 + '"'), 1)
         $preloadContent = [regex]::Replace($preloadContent, 'EXPECTED_PLUGIN_VERSION = "[^"]*"', ('EXPECTED_PLUGIN_VERSION = "' + $pluginVersion + '"'), 1)
         if (-not $DryRun) {
@@ -2800,9 +3650,30 @@ try {
         $InstallReport.CompilerBypassBootstrap = $DisableCompilerBootstrap
     }
 
-    $injectionPlan = Resolve-InjectionPlan $Diagnostics $InstallReport.PatchMode
-    Add-Note ("[*] Injection plan: MKXP={0}; RGSS={1}; {2}." -f $injectionPlan.UseMkxp, $injectionPlan.UseRgss, $injectionPlan.Reason)
-    if ($injectionPlan.UseMkxp -and (Test-Path $JsonPath -PathType Leaf)) {
+    if ($injectionPlan.UseYuri) {
+        if (-not (Test-Path $SourceYuriBootstrap -PathType Leaf)) {
+            throw "Could not find yuri_bootstrap.rb!"
+        }
+        $yuriChunksDir = Join-Path $PluginDir "yuri_chunks"
+        $chunkCount = Write-YuriMenuChunks $pokedebugMenuContent $yuriChunksDir -ValidateOnly:$DryRun
+        Add-Note ("[*] Prepared {0} balanced Ruby chunks for the Yuri 1.9 runtime." -f $chunkCount)
+        if (-not $DryRun) {
+            $yuriBootstrapContent = [System.IO.File]::ReadAllText($SourceYuriBootstrap, [System.Text.Encoding]::UTF8)
+            Write-Utf8FileAtomic $DestYuriBootstrap $yuriBootstrapContent
+        }
+    }
+
+    Add-Note ("[*] Injection plan: MKXP={0}; RGSS={1}; YURI={2}; {3}." -f $injectionPlan.UseMkxp, $injectionPlan.UseRgss, $injectionPlan.UseYuri, $injectionPlan.Reason)
+    if ($injectionPlan.UseMkxp -and -not (Test-Path $JsonPath -PathType Leaf) -and $Diagnostics.HasMkxpPatches) {
+        if ($DryRun) {
+            Add-Note "[*] MKXP patches.json signature detected; a minimal mkxp.json preload configuration would be created."
+        } else {
+            Write-Utf8FileAtomic $JsonPath ("{`r`n  `"preloadScript`": [`"preload_menu.rb`"]`r`n}`r`n")
+            $InstallReport.MkxpInjected = $true
+            Add-Note "[+] MKXP runtime detected through patches.json; created a minimal mkxp.json preload configuration."
+        }
+    }
+    if ($injectionPlan.UseMkxp -and ((Test-Path $JsonPath -PathType Leaf) -or ($DryRun -and $Diagnostics.HasMkxpPatches))) {
         Log "[*] Found mkxp.json. Injecting plugin via MKXP-Z loader..." "Cyan"
         if ($DryRun) {
             Log "[*] mkxp.json detected and validated for preload injection." "Green"
@@ -2816,6 +3687,25 @@ try {
                 Log "[-] Plugin already loaded in mkxp.json." "Yellow"
             } else {
                 throw "mkxp.json was found, but preload injection could not be confirmed automatically."
+            }
+        }
+    }
+
+    if ($injectionPlan.UseYuri) {
+        Log "[*] Yuri RGSS encrypted runtime detected. Installing native evaluation bridge..." "Magenta"
+        if ($DryRun) {
+            if (-not [YuriRgssPatcher]::IsSupported($YuriGameExe)) {
+                throw "Yuri RGSS was detected, but this Game.exe startup layout is not supported."
+            }
+            Log "[*] Yuri RGSS Game.exe validated and ready for reversible bridge injection." "Green"
+        } else {
+            try {
+                $yuriPatchMode = [YuriRgssPatcher]::ApplyPatch($GameDir)
+                $InstallReport.YuriPatchMode = $yuriPatchMode
+                $InstallReport.YuriRgssInjected = $true
+                Log "[+] Yuri RGSS runtime bridge installed successfully!" "Green"
+            } catch {
+                throw ("Yuri RGSS injection failed: {0}" -f $_)
             }
         }
     }
@@ -2854,7 +3744,7 @@ try {
     Show-CardLine "DryRun" $InstallReport.DryRun "Gray"
     Show-CardLine "Uninstall" $InstallReport.Uninstall "Gray"
     Show-CardLine "RestoreBackups" $InstallReport.RestoreBackups "Gray"
-    Show-CardLine "GodModeCopied" $InstallReport.GodModeCopied "Gray"
+    Show-CardLine "PokeDebugMenuCopied" $InstallReport.PokeDebugMenuCopied "Gray"
     Show-CardLine "PreloadCopied" $InstallReport.PreloadCopied "Gray"
     Show-CardLine "NativeDebugBootstrap" $InstallReport.NativeDebugBootstrap "Gray"
     Show-CardLine "CompilerBypassBootstrap" $InstallReport.CompilerBypassBootstrap "Gray"
@@ -2863,15 +3753,24 @@ try {
     if (-not [string]::IsNullOrWhiteSpace($InstallReport.RgssPatchMode)) {
         Show-CardLine "RgssPatchMode" $InstallReport.RgssPatchMode "Gray"
     }
+    Show-CardLine "YuriRgssInjected" $InstallReport.YuriRgssInjected "Gray"
+    Show-CardLine "PsdkInjected" $InstallReport.PsdkInjected "Gray"
+    if (-not [string]::IsNullOrWhiteSpace($InstallReport.YuriPatchMode)) {
+        Show-CardLine "YuriPatchMode" $InstallReport.YuriPatchMode "Gray"
+    }
     Show-CardLine "IniUpdated" $InstallReport.IniUpdated "Gray"
     if ($InstallReport.Warnings.Count -gt 0) {
         Show-CardLine "Warnings" $InstallReport.Warnings.Count "Yellow"
     }
     $manifestPath = $null
     if (-not $DryRun) {
-        [void](Test-PokeDebugInstallation $DestGodMode $DestPreload $JsonPath ([bool]$injectionPlan.UseMkxp))
+        [void](Test-PokeDebugInstallation $DestPokeDebugMenu $DestPreload $JsonPath ([bool]$injectionPlan.UseMkxp))
+        # The new loader is already validated and mkxp.json no longer points to
+        # the previous filename, so an obsolete copy can now be removed safely.
+        [void](Remove-IfExistsSafe $LegacyDestPreload)
         Show-MasStatus (Get-Msg "Checking installed payload" "Verificando arquivos instalados" "Verificando archivos instalados") (Get-Msg "Successful" "Sucesso" "Correcto") Green
-        $manifestPath = Write-PokeDebugManifest $GameDir $DestGodMode $DestPreload $InstallReport.StrategyName
+        [void](Remove-IfExistsSafe $LegacyPluginDir)
+        $manifestPath = Write-PokeDebugManifest $GameDir $DestPokeDebugMenu $DestPreload $InstallReport.StrategyName
         Show-MasStatus (Get-Msg "Checking installation manifest" "Verificando manifesto" "Verificando manifiesto") (Get-Msg "Successful" "Sucesso" "Correcto") Green
         [void]$InstallReport.Notes.Add("[+] Installation manifest validated.")
     }
