@@ -186,7 +186,7 @@ The Ruby module order is defined in `Generate-PokeDebugMenu.ps1`. New runtime co
 
 ## Credits
 
-- **Kzuran** — Creator and lead developer.
+- **Kzuran** — Creator
 
 ## Project Status / Mensagem
 
@@ -194,5 +194,4 @@ The Ruby module order is defined in `Generate-PokeDebugMenu.ps1`. New runtime co
 
 **PT-BR:** Atualmente não planejo mais manter este projeto ativamente e vou deixá-lo nas mãos da comunidade. Sinta-se livre para fazer um fork ou enviar um pull request.
 
-— **Kzuran**
 
