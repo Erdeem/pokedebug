@@ -7,7 +7,7 @@ module DeveloperMenu
       upper_name = symbol_name.to_s.upcase
       return Input.const_get(upper_name) if Input.const_defined?(upper_name)
       symbol_name
-    rescue
+    rescue StandardError
       nil
     end
 
@@ -22,7 +22,7 @@ module DeveloperMenu
       end
       return true if !value.nil? && Input.press?(value)
       native_key_pressed?(constant_name || symbol_name)
-    rescue
+    rescue StandardError
       false
     end
 
@@ -47,16 +47,28 @@ module DeveloperMenu
       buttons = combo[:buttons] || []
       return false if buttons.empty?
       all_input_pressing?(*buttons)
-    rescue
+    rescue StandardError
       false
     end
 
     def mobile_combo_label(combo)
       combo[:label] || (combo[:buttons] || []).map { |button| button.to_s.upcase }.join(" + ")
-    rescue
+    rescue StandardError
       "UNKNOWN"
     end
 
+    def required_combo_hold_frames(base_frames)
+      rate = 40
+      begin
+        rate = Graphics.frame_rate if defined?(Graphics) && Graphics.respond_to?(:frame_rate) && Graphics.frame_rate
+      rescue
+        rate = 40
+      end
+      rate = 40 if rate.to_i <= 0
+      [(base_frames.to_i * rate.to_f / 40.0).round, base_frames.to_i].max
+    rescue
+      base_frames.to_i
+    end
     def joiplay_combo_triggered?
       return false unless defined?(Input)
       @mobile_combo_hold_counters ||= {}
@@ -67,7 +79,7 @@ module DeveloperMenu
         label = mobile_combo_label(combo)
         if mobile_combo_pressed?(combo)
           @mobile_combo_hold_counters[label] = @mobile_combo_hold_counters.fetch(label, 0).to_i + 1
-          next unless @mobile_combo_hold_counters[label] >= combo[:hold].to_i
+          next unless @mobile_combo_hold_counters[label] >= required_combo_hold_frames(combo[:hold])
           @last_mobile_combo_label = label
           triggered = true
           break
@@ -283,7 +295,13 @@ module DeveloperMenu
              (!battle_scene_active? || battle_wtw_hotkey_enabled?)
             toggle_wtw
           end
-          if trigger_hotkey?(hotkey_symbol_for(:heal_party), hotkey_input_constant_for(:heal_party)) &&
+          if trigger_hotkey?(hotkey_symbol_for(:fast_forward), hotkey_input_constant_for(:fast_forward))
+            toggle_fast_forward!
+          end
+          if trigger_hotkey?(hotkey_symbol_for(:fast_forward), hotkey_input_constant_for(:fast_forward))
+          toggle_fast_forward!
+        end
+        if trigger_hotkey?(hotkey_symbol_for(:heal_party), hotkey_input_constant_for(:heal_party)) &&
              (!battle_scene_active? || battle_heal_hotkey_enabled?)
             heal_party
           end

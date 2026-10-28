@@ -307,7 +307,7 @@ try {
         'set "POKEDEBUG_WORK=%TEMP%\PokeDebug_%RANDOM%_%RANDOM%_%RANDOM%"',
         'set "POKEDEBUG_LAUNCH_DIR=%~dp0"',
         'color 07',
-        'title  PokeDebug Installer 3.1.4',
+        'title  PokeDebug Installer 3.5.0',
         'mode con: cols=76 lines=34',
         'cd /d "%~dp0"',
         ('powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "' + $decoder + '"'),

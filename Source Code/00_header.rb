@@ -8,8 +8,17 @@
 # items, money, badges, and more. It also provides quick access to certain
 # features like warping to maps, toggling battle settings, and editing PBS files.
 #===============================================================================
+# Ruby 1.8.1 (standard RGSS1 / RPG Maker XP) compatibility polyfills
+unless Symbol.method_defined?(:to_proc)
+  class Symbol
+    def to_proc
+      proc { |obj, *args| obj.send(self, *args) }
+    end
+  end
+end
+
 module DeveloperMenu
-  VERSION = '3.1.4'
+  VERSION = '3.5.0'
   LOG_FILE_NAME = 'developer_menu_errors.log'
   STATE_FILE_NAME = 'developer_menu_boot_state.dat'
   LANG = 'en'
@@ -21,6 +30,7 @@ module DeveloperMenu
   MENU_HOTKEY = 'F6'
   WTW_HOTKEY = 'F5'
   HEAL_HOTKEY = 'F9'
+  SPEED_HOTKEY = 'F8'
   TR = {
     :dev_menu => {"English" => "PokeDebug Menu", "Portugues" => "PokeDebug Menu", "Espanol" => "PokeDebug Menu"},
     :engine => {"English" => "Engine", "Portugues" => "Engine do Jogo", "Espanol" => "Motor del Juego"},
@@ -132,6 +142,12 @@ module DeveloperMenu
     :test_trainer_battle => {"English" => "Test Trainer Battle", "Portugues" => "Testar Batalha de Treinador", "Espanol" => "Probar Batalla de Entrenador"},
     :test_trainer_battle_advanced => {"English" => "Test Trainer Battle Advanced", "Portugues" => "Testar Batalha de Treinador Avancada", "Espanol" => "Probar Batalla de Entrenador Avanzada"},
     :edit_safari_contest => {"English" => "Edit Safari/Contest", "Portugues" => "Editar Safari/Torneio", "Espanol" => "Editar Safari/Torneo"},
+    :fast_forward => {"English" => "Fast Forward Speed", "Portugues" => "Velocidade Fast Forward", "Espanol" => "Velocidad Fast Forward"},
+    :battle_win => {"English" => "Win Battle Immediately", "Portugues" => "Vencer Batalha Imediatamente", "Espanol" => "Ganar Batalla Inmediatamente"},
+    :battle_escape => {"English" => "Escape from Battle", "Portugues" => "Fugir da Batalha", "Espanol" => "Escapar de la Batalla"},
+    :battle_catch => {"English" => "Catch Wild Pokemon", "Portugues" => "Capturar Pokemon Selvagem", "Espanol" => "Capturar Pokemon Salvaje"},
+    :add_fusion => {"English" => "Add Fusion Pokemon", "Portugues" => "Adicionar Pokemon Fusao", "Espanol" => "Anadir Pokemon Fusion"},
+    :battle_field_effect => {"English" => "Battle Field Effect", "Portugues" => "Efeito de Campo de Batalha", "Espanol" => "Efecto de Campo de Batalla"},
     :field_effects_title => {"English" => "Field Effects", "Portugues" => "Efeitos de Campo", "Espanol" => "Efectos de Campo"},
     :wallpapers_title => {"English" => "Wallpapers", "Portugues" => "Wallpapers", "Espanol" => "Fondos"},
     :battle_tools_title => {"English" => "Battle Tools", "Portugues" => "Ferramentas de Batalha", "Espanol" => "Herramientas de Batalla"},
@@ -192,6 +208,7 @@ module DeveloperMenu
     :force_gender_genderless => {"English" => "Force Gender (Genderless)", "Portugues" => "Forcar Genero (Sem Genero)", "Espanol" => "Forzar Genero (Sin Genero)"},
     :change_species => {"English" => "Change Species", "Portugues" => "Mudar Especie", "Espanol" => "Cambiar Especie"},
     :change_form => {"English" => "Change Form", "Portugues" => "Mudar Forma", "Espanol" => "Cambiar Forma"},
+    :set_form_override => {"English" => "Set Form Override (Lock Form)", "Portugues" => "Definir Override de Forma (Travar Forma)", "Espanol" => "Fijar Override de Forma (Bloquear Forma)"},
     :remove_form_override => {"English" => "Remove Form Override", "Portugues" => "Remover Override de Forma", "Espanol" => "Quitar Override de Forma"},
     :set_nickname => {"English" => "Set Nickname", "Portugues" => "Definir Apelido", "Espanol" => "Definir Apodo"},
     :toggle_shiny => {"English" => "Toggle Shiny", "Portugues" => "Alternar Shiny", "Espanol" => "Alternar Shiny"},
@@ -204,6 +221,19 @@ module DeveloperMenu
     :toggle_cannot_trade => {"English" => "Toggle Cannot Trade", "Portugues" => "Alternar Nao Pode Trocar", "Espanol" => "Alternar No se Puede Intercambiar"},
     :make_egg => {"English" => "Make Egg", "Portugues" => "Transformar em Ovo", "Espanol" => "Convertir en Huevo"},
     :hatch_egg => {"English" => "Hatch Egg", "Portugues" => "Chocar Ovo", "Espanol" => "Eclosionar Huevo"},
+        :toggle_gmax => {"English" => "Toggle Gigantamax Factor", "Portugues" => "Alternar Fator Gigantamax", "Espanol" => "Alternar Factor Gigantamax"},
+    :set_tera_type => {"English" => "Set Tera Type", "Portugues" => "Definir Tera Type", "Espanol" => "Definir Teratipo"},
+    :toggle_shadow => {"English" => "Toggle Shadow Pokemon", "Portugues" => "Alternar Shadow Pokemon", "Espanol" => "Alternar Pokemon Oscuro"},
+    :edit_heart_gauge => {"English" => "Edit Heart Gauge", "Portugues" => "Editar Barra do Coracao", "Espanol" => "Editar Barra del Corazon"},
+    :toggle_fateful => {"English" => "Toggle Fateful Encounter", "Portugues" => "Alternar Encontro Marcado (Fateful)", "Espanol" => "Alternar Encuentro Fatidico"},
+    :fix_obedience => {"English" => "Make 100% Obedient (Match OT)", "Portugues" => "Tornar 100% Obediente (Ajustar OT)", "Espanol" => "Hacer 100% Obediente (Ajustar OT)"},
+    :set_ability_slot => {"English" => "Set Ability Slot (1, 2, Hidden)", "Portugues" => "Definir Slot de Habilidade (1, 2, Oculta)", "Espanol" => "Definir Espacio de Habilidad (1, 2, Oculta)"},
+    :weather_title => {"English" => "Overworld Weather", "Portugues" => "Clima do Mapa (Overworld)", "Espanol" => "Clima del Mapa (Overworld)"},
+    :time_title => {"English" => "Time of Day / Lighting", "Portugues" => "Hora do Dia / Iluminacao", "Espanol" => "Hora del Dia / Iluminacion"},
+        :force_save => {"English" => "Emergency / Force Save Game", "Portugues" => "Salvar Jogo Forcado / Emergencial", "Espanol" => "Guardar Partida Forzado / Emergencia"},
+    :unstuck_player => {"English" => "Emergency Unstuck Player", "Portugues" => "Desprender / Destravar Jogador", "Espanol" => "Desatascar / Destrabar Jugador"},
+    :trigger_evolution => {"English" => "Trigger Evolution", "Portugues" => "Disparar Evolucao", "Espanol" => "Activar Evolucion"},
+        :check_updates => {"English" => "Check for Updates", "Portugues" => "Verificar Atualizacoes", "Espanol" => "Buscar Actualizaciones"},
     :one_step_hatch => {"English" => "1 Step to Hatch", "Portugues" => "1 Passo para Chocar", "Espanol" => "1 Paso para Eclosionar"}
   }
 end

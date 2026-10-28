@@ -8,6 +8,7 @@ module DeveloperMenu
         battle_menu_entry(:pokemon_expand_boxes, t(TR[:addboxes])) { pokemon_expand_boxes },
         battle_menu_entry(:pokemon_quick_hatch, t(TR[:quickhatch])) { pokemon_quick_hatch },
         battle_menu_entry(:pokemon_add, t(TR[:addpkmn])) { pokemon_add },
+        battle_menu_entry(:pokemon_add_fusion, t(TR[:add_fusion])) { pokemon_add_fusion },
         battle_menu_entry(:pokemon_import_preset, t(TR[:import_preset])) { pokemon_import_preset },
         battle_menu_entry(:pokemon_heal_party, t(TR[:Heal])) { heal_party },
         battle_menu_entry(:pokemon_export_ids, t(TR[:exportids])) { dump_ids(:Species, "Pokemon_ID_List.txt") }
@@ -91,6 +92,11 @@ module DeveloperMenu
       failed = 0
       completed = true
       species_entries = storage_species_form_entries
+        if species_entries.length > 1500
+          if Kernel.pbConfirmMessage(_INTL("High species count detected ({1}). Limit to first 1000 base species to protect game memory?", species_entries.length))
+            species_entries = species_entries.slice(0, 1000)
+          end
+        end
       stored_forms = {}
       free_slots = []
       each_storage_index do |box, slot|
@@ -311,6 +317,29 @@ end
       end
     end
 
+    def pokemon_add_fusion
+      hash = build_search_hash(:Species)
+      return Kernel.pbMessage(_INTL("Species data not available.")) if hash.empty?
+      head_id = search_list("Head Species (Fusion)", hash)
+      return unless head_id && head_id.to_i > 0
+      body_id = search_list("Body Species (Fusion)", hash)
+      return unless body_id && body_id.to_i > 0
+      fusion_id = head_id.to_i + (body_id.to_i * 500)
+      level = choose_debug_level(_INTL("Set the Fusion Pokemon's level."), 5)
+      return if level <= 0
+      pkmn = create_pkmn(fusion_id, level)
+      return Kernel.pbMessage(engine_failure_message("create Fusion Pokemon ##{fusion_id}")) unless pkmn
+      recalc_pokemon_stats(pkmn)
+      if add_pkmn_silently(pkmn)
+        sp_name = pokemon_species_name(pkmn)
+        Kernel.pbMessage(_INTL("Added Fusion {1} (ID #{2}) to party/storage.", sp_name, fusion_id))
+      else
+        Kernel.pbMessage(_INTL("Couldn't add Fusion Pokemon because party and storage are full."))
+      end
+    rescue => e
+      log_error("Add Fusion Pokemon", e)
+      Kernel.pbMessage(engine_failure_message("add Fusion Pokemon"))
+    end
     def pokemon_import_preset
       preset = import_pokemon_preset
       return Kernel.pbMessage(_INTL("Preset file not found.")) unless preset
@@ -481,7 +510,7 @@ end
           # Fallback clone if Marshal fails
           pockets = bag_obj.instance_variable_get(:@pockets)
           if pockets.is_a?(Array)
-            backup_pockets = pockets.map { |pocket| pocket.is_a?(Array) ? pocket.map(&:dup) : pocket }
+            backup_pockets = pockets.map { |pocket| pocket.is_a?(Array) ? pocket.map { |item| item.is_a?(Array) ? item.dup : item } : pocket }
           end
         end
       end

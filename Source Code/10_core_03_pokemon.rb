@@ -411,6 +411,7 @@ module DeveloperMenu
 
     def pokemon_species_name(pkmn)
       return "Unknown" unless pkmn
+      return pkmn.species_name if pkmn.respond_to?(:species_name) && pkmn.species_name
       return pkmn.speciesName if pkmn.respond_to?(:speciesName) && pkmn.speciesName
       species_id = pkmn.species if pkmn.respond_to?(:species)
       record = data_record(:Species, species_id)
@@ -504,6 +505,7 @@ module DeveloperMenu
       return false unless pkmn
       return pkmn.shiny? if pkmn.respond_to?(:shiny?)
       return pkmn.shiny if pkmn.respond_to?(:shiny)
+      return pkmn.isShiny? if pkmn.respond_to?(:isShiny?)
       false
     rescue => e
       log_error("Pokemon Shiny State", e)
@@ -536,8 +538,10 @@ module DeveloperMenu
       status = pokemon_status_label(pkmn)
       shiny_tag = pokemon_shiny_state(pkmn) ? " *Shiny*" : ""
       egg_tag = pokemon_egg_state(pkmn) ? " [Egg]" : ""
+      override_val = pokemon_form_override_value(pkmn)
+      override_tag = override_val.nil? ? "" : " [Form:#{override_val}]"
       hp_text = hp.nil? || total_hp.nil? ? "" : " HP #{hp}/#{total_hp}"
-      "#{name} (Lv.#{level})#{egg_tag}#{shiny_tag}#{hp_text} #{status}"
+      "#{name} (Lv.#{level})#{egg_tag}#{shiny_tag}#{override_tag}#{hp_text} #{status}"
     rescue => e
       log_error("Pokemon Party Label", e)
       "Unknown Pokemon"
@@ -676,12 +680,100 @@ module DeveloperMenu
       false
     end
 
+    def pokemon_form_override_value(pkmn)
+      return nil unless pkmn
+      override = pkmn.instance_variable_get(:@pokedebug_form_override)
+      return override.to_i if !override.nil?
+      return pkmn.forced_form.to_i if pkmn.respond_to?(:forced_form) && !pkmn.forced_form.nil?
+      nil
+    rescue StandardError => e
+      log_error("Pokemon Form Override Value", e)
+      nil
+    end
+
+    def patch_form_override_class!(klass)
+      return false unless klass
+      return true if klass.instance_variable_get(:@pokedebug_form_override_patched)
+      klass.instance_variable_set(:@pokedebug_form_override_patched, true)
+      if klass.method_defined?(:form) && !klass.method_defined?(:_pokedebug_orig_form_dev)
+        klass.class_eval do
+          alias_method :_pokedebug_orig_form_dev, :form
+          def form(*args)
+            override = instance_variable_get(:@pokedebug_form_override)
+            return override.to_i if !override.nil?
+            _pokedebug_orig_form_dev(*args)
+          end
+        end
+      end
+      [:makeUnmega, :make_unmega, :reset_form, :makeUnprimal, :make_unprimal].each do |m|
+        orig_m = :"_pokedebug_orig_#{m}_dev"
+        if klass.method_defined?(m) && !klass.method_defined?(orig_m)
+          klass.class_eval do
+            alias_method orig_m, m
+            define_method(m) do |*args|
+              res = send(orig_m, *args)
+              override = instance_variable_get(:@pokedebug_form_override)
+              if !override.nil?
+                self.form = override.to_i if respond_to?(:form=)
+                self.forced_form = override.to_i if respond_to?(:forced_form=)
+                calc_stats if respond_to?(:calc_stats)
+                calcStats if respond_to?(:calcStats)
+              end
+              res
+            end
+          end
+        end
+      end
+      true
+    rescue StandardError => e
+      log_error("Patch Form Override Class", e)
+      false
+    end
+
+    def set_pokemon_form_override!(pkmn, form_id)
+      return false unless pkmn
+      form = form_id.to_i
+      patch_form_override_class!(pkmn.class)
+      pkmn.instance_variable_set(:@pokedebug_form_override, form)
+      pkmn.forced_form = form if pkmn.respond_to?(:forced_form=)
+      pkmn.form_simple = form if pkmn.respond_to?(:form_simple=)
+      pkmn.form = form if pkmn.respond_to?(:form=)
+      pkmn.setForm(form) if pkmn.respond_to?(:setForm)
+      recalc_pokemon_stats(pkmn)
+      true
+    rescue StandardError => e
+      log_error("Set Form Override", e)
+      false
+    end
+
+    def ensure_pokemon_form_overrides_persistence!
+      party = player_party rescue []
+      return unless party && party.is_a?(Array)
+      party.each do |pkmn|
+        next unless pkmn
+        override = pkmn.instance_variable_get(:@pokedebug_form_override)
+        next if override.nil?
+        patch_form_override_class!(pkmn.class)
+        current_f = pkmn.respond_to?(:form) ? pkmn.form : nil
+        if current_f != override.to_i
+          pkmn.form = override.to_i if pkmn.respond_to?(:form=)
+          pkmn.forced_form = override.to_i if pkmn.respond_to?(:forced_form=)
+          recalc_pokemon_stats(pkmn)
+        end
+      end
+    rescue StandardError => e
+      log_error("Ensure Form Overrides Persistence", e)
+    end
     def clear_pokemon_form_override!(pkmn)
       return false unless pkmn
+      pkmn.instance_variable_set(:@pokedebug_form_override, nil)
       pkmn.forced_form = nil if pkmn.respond_to?(:forced_form=)
       pkmn.form_simple = nil if pkmn.respond_to?(:form_simple=)
+      pkmn.form = 0 if pkmn.respond_to?(:form=)
+      pkmn.setForm(0) if pkmn.respond_to?(:setForm)
+      recalc_pokemon_stats(pkmn)
       true
-    rescue => e
+    rescue StandardError => e
       log_error("Clear Form Override", e)
       false
     end
@@ -727,9 +819,11 @@ module DeveloperMenu
       return false unless pkmn
       pkmn.name = "Egg" if pkmn.respond_to?(:name=)
       pkmn.egg_steps = 255 if pkmn.respond_to?(:egg_steps=)
+      pkmn.eggsteps = 255 if pkmn.respond_to?(:eggsteps=)
       recalc_pokemon_stats(pkmn)
       return pokemon_egg_state(pkmn) if pkmn.respond_to?(:egg?) || pkmn.respond_to?(:isEgg?)
       return pkmn.egg_steps.to_i == 255 if pkmn.respond_to?(:egg_steps)
+      return pkmn.eggsteps.to_i == 255 if pkmn.respond_to?(:eggsteps)
       true
     rescue => e
       log_error("Make Egg", e)
@@ -738,8 +832,10 @@ module DeveloperMenu
 
     def hatch_pokemon_egg!(pkmn)
       return false unless pkmn
-      pkmn.name = pkmn.speciesName if pkmn.respond_to?(:name=) && pkmn.respond_to?(:speciesName)
+      species_name = pokemon_species_name(pkmn)
+      pkmn.name = species_name if pkmn.respond_to?(:name=) && species_name && species_name != "Unknown"
       pkmn.egg_steps = 0 if pkmn.respond_to?(:egg_steps=)
+      pkmn.eggsteps = 0 if pkmn.respond_to?(:eggsteps=)
       recalc_pokemon_stats(pkmn)
       true
     rescue => e
@@ -749,9 +845,16 @@ module DeveloperMenu
 
     def set_pokemon_hatch_steps!(pkmn, steps)
       return false unless pkmn
-      return false unless pkmn.respond_to?(:egg_steps=)
-      pkmn.egg_steps = steps
-      true
+      steps_val = steps.to_i
+      if pkmn.respond_to?(:egg_steps=)
+        pkmn.egg_steps = steps_val
+        return true
+      elsif pkmn.respond_to?(:eggsteps=)
+        pkmn.egg_steps = steps_val rescue nil
+        pkmn.eggsteps = steps_val if pkmn.respond_to?(:eggsteps=)
+        return true
+      end
+      false
     rescue => e
       log_error("Set Egg Steps", e)
       false
@@ -803,6 +906,182 @@ module DeveloperMenu
 
     def faint_pokemon!(pkmn)
       set_pokemon_hp!(pkmn, 0)
+    end
+
+    def pokemon_gmax_factor?(pkmn)
+      return false unless pkmn
+      return !!pkmn.gmax_factor if pkmn.respond_to?(:gmax_factor)
+      return !!pkmn.hasGmaxFactor? if pkmn.respond_to?(:hasGmaxFactor?)
+      return !!pkmn.can_gigantamax? if pkmn.respond_to?(:can_gigantamax?)
+      false
+    rescue StandardError
+      false
+    end
+
+    def set_pokemon_gmax_factor!(pkmn, flag)
+      return false unless pkmn
+      if pkmn.respond_to?(:gmax_factor=)
+        pkmn.gmax_factor = !!flag
+        return true
+      elsif flag && pkmn.respond_to?(:giveGmaxFactor)
+        pkmn.giveGmaxFactor
+        return true
+      elsif !flag && pkmn.respond_to?(:removeGmaxFactor)
+        pkmn.removeGmaxFactor
+        return true
+      end
+      false
+    rescue StandardError => e
+      log_error("Set GMax Factor", e)
+      false
+    end
+
+    def pokemon_tera_type(pkmn)
+      return nil unless pkmn
+      return pkmn.tera_type if pkmn.respond_to?(:tera_type)
+      nil
+    rescue StandardError
+      nil
+    end
+
+    def set_pokemon_tera_type!(pkmn, type_sym)
+      return false unless pkmn
+      if pkmn.respond_to?(:tera_type=)
+        pkmn.tera_type = type_sym
+        return true
+      elsif pkmn.respond_to?(:forced_tera_type=)
+        pkmn.forced_tera_type = type_sym
+        return true
+      end
+      false
+    rescue StandardError => e
+      log_error("Set Tera Type", e)
+      false
+    end
+
+    def pokemon_shadow?(pkmn)
+      return false unless pkmn
+      return pkmn.shadowPokemon? if pkmn.respond_to?(:shadowPokemon?)
+      return !!pkmn.shadow if pkmn.respond_to?(:shadow)
+      false
+    rescue StandardError
+      false
+    end
+
+    def set_pokemon_shadow!(pkmn, flag)
+      return false unless pkmn
+      if flag
+        if pkmn.respond_to?(:makeShadow)
+          pkmn.makeShadow
+          return true
+        elsif pkmn.respond_to?(:shadow=)
+          pkmn.shadow = true
+          pkmn.heartgauge = 10000 if pkmn.respond_to?(:heartgauge=)
+          return true
+        end
+      else
+        if pkmn.respond_to?(:makeNotShadow)
+          pkmn.makeNotShadow
+          return true
+        elsif pkmn.respond_to?(:purify)
+          pkmn.purify
+          return true
+        elsif pkmn.respond_to?(:shadow=)
+          pkmn.shadow = false
+          pkmn.heartgauge = 0 if pkmn.respond_to?(:heartgauge=)
+          return true
+        end
+      end
+      false
+    rescue StandardError => e
+      log_error("Set Shadow State", e)
+      false
+    end
+
+    def pokemon_heart_gauge(pkmn)
+      return nil unless pkmn
+      return pkmn.heartgauge if pkmn.respond_to?(:heartgauge)
+      return pkmn.heart_gauge if pkmn.respond_to?(:heart_gauge)
+      nil
+    rescue StandardError
+      nil
+    end
+
+    def set_pokemon_heart_gauge!(pkmn, value)
+      return false unless pkmn
+      val = value.to_i
+      val = 0 if val < 0
+      if pkmn.respond_to?(:heartgauge=)
+        pkmn.heartgauge = val
+        return true
+      elsif pkmn.respond_to?(:heart_gauge=)
+        pkmn.heart_gauge = val
+        return true
+      end
+      false
+    rescue StandardError => e
+      log_error("Set Heart Gauge", e)
+      false
+    end
+
+    def pokemon_fateful_encounter?(pkmn)
+      return false unless pkmn
+      return !!pkmn.fateful_encounter if pkmn.respond_to?(:fateful_encounter)
+      return pkmn.obtain_method == 4 if pkmn.respond_to?(:obtain_method)
+      false
+    rescue StandardError
+      false
+    end
+
+    def set_pokemon_fateful_encounter!(pkmn, flag)
+      return false unless pkmn
+      if pkmn.respond_to?(:fateful_encounter=)
+        pkmn.fateful_encounter = !!flag
+        return true
+      elsif pkmn.respond_to?(:obtain_method=)
+        pkmn.obtain_method = flag ? 4 : 0
+        return true
+      end
+      false
+    rescue StandardError => e
+      log_error("Set Fateful Encounter", e)
+      false
+    end
+
+    def make_pokemon_obedient!(pkmn)
+      return false unless pkmn
+      p = get_player
+      if p
+        p_name = p.respond_to?(:name) ? p.name : "Trainer"
+        p_id = p.respond_to?(:id) ? p.id : 0
+        if pkmn.respond_to?(:owner) && pkmn.owner
+          pkmn.owner.name = p_name if pkmn.owner.respond_to?(:name=)
+          pkmn.owner.id = p_id if pkmn.owner.respond_to?(:id=)
+        end
+        pkmn.ot = p_name if pkmn.respond_to?(:ot=)
+        pkmn.trainerID = p_id if pkmn.respond_to?(:trainerID=)
+        pkmn.personalID = rand(256) | (rand(256) << 8) | (rand(256) << 16) | (rand(256) << 24) if pkmn.respond_to?(:personalID) && pkmn.personalID.nil?
+      end
+      pkmn.obtain_mode = 0 if pkmn.respond_to?(:obtain_mode=)
+      pkmn.obtain_text = "" if pkmn.respond_to?(:obtain_text=)
+      true
+    rescue StandardError => e
+      log_error("Make Pokemon Obedient", e)
+      false
+    end
+
+    def set_pokemon_ability_slot!(pkmn, slot_index)
+      return false unless pkmn
+      idx = slot_index.to_i
+      if pkmn.respond_to?(:ability_index=)
+        pkmn.ability_index = idx
+        pkmn.reset_moves if pkmn.respond_to?(:reset_moves)
+        return true
+      end
+      false
+    rescue StandardError => e
+      log_error("Set Ability Slot", e)
+      false
     end
   end
 end

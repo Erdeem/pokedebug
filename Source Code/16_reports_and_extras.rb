@@ -545,7 +545,7 @@ module DeveloperMenu
 
     def write_quick_actions_config!
       begin
-        lines = quick_actions.map(&:to_s)
+        lines = quick_actions.map { |a| a.to_s }
         File.open(quick_actions_config_path, "w") { |f| f.puts(lines.join("\n")) }
         true
       rescue => e
@@ -558,9 +558,9 @@ module DeveloperMenu
       @quick_actions = [:heal_party, :engine_report, :native_debug, :none]
       return @quick_actions unless File.file?(quick_actions_config_path)
       begin
-        lines = File.readlines(quick_actions_config_path).map(&:strip).reject { |l| l.empty? }
+        lines = File.readlines(quick_actions_config_path).map { |line| line.strip }.reject { |l| l.empty? }
         if lines.length == 4
-          @quick_actions = lines.map(&:to_sym)
+          @quick_actions = lines.map { |line| line.to_sym }
         end
       rescue => e
         log_error("Load Quick Actions Config", e)
@@ -746,6 +746,24 @@ module DeveloperMenu
 
     def menu_extras
       render_dynamic_menu(t(TR[:extras]).upcase, extras_menu_entries)
+    end
+
+    def check_pokedebug_updates
+      lines = []
+      lines << _INTL("PokeDebug Version: {1}", developer_menu_version)
+      lines << _INTL("Build Signature: Universal 2026 Edition")
+      lines << _INTL("Ruby Engine: {1} (v{2})", (defined?(RUBY_ENGINE) ? RUBY_ENGINE : "mri"), RUBY_VERSION)
+      lines << _INTL("Game Title: {1}", current_game_title)
+      lines << ""
+      lines << _INTL("GitHub: https://github.com/Erdeem/pokedebug")
+      lines << _INTL("Auto-Update status:")
+      lines << _INTL("To update PokeDebug, simply run PokeDebug_Installer.cmd")
+      lines << _INTL("in your game folder and select 'Update / Reinstall'.")
+      lines << _INTL("Your custom hotkeys and settings will be preserved.")
+      Kernel.pbMessage(_INTL("{1}", lines.join("\n")))
+    rescue StandardError => e
+      log_error("Check Updates", e)
+      Kernel.pbMessage(engine_failure_message("check updates"))
     end
   end
 end

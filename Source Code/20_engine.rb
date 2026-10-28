@@ -49,13 +49,32 @@ module DeveloperMenu
         battle_menu_entry(:engine_reset_trainers, t(TR[:reset_map_trainers])) { engine_reset_trainers },
         battle_menu_entry(:engine_exp_all, t(TR[:expall])) { engine_exp_all },
         battle_menu_entry(:engine_battle_logging, t(TR[:battle_logging])) { engine_battle_logging },
-        battle_menu_entry(:engine_wtw, t(TR[:wtw])) { toggle_wtw }
+        battle_menu_entry(:engine_weather, t(TR[:weather_title])) { engine_weather },
+        battle_menu_entry(:engine_time, t(TR[:time_title])) { engine_time },
+        battle_menu_entry(:engine_force_save, t(TR[:force_save])) { engine_force_save },
+        battle_menu_entry(:engine_unstuck, t(TR[:unstuck_player])) { engine_unstuck },
+        battle_menu_entry(:engine_wtw, t(TR[:wtw])) { toggle_wtw },
+        battle_menu_entry(:engine_fast_forward, t(TR[:fast_forward]) + ": " + (respond_to?(:current_fast_forward_label) ? current_fast_forward_label : "1.0x")) { engine_fast_forward_select }
       ])
       menu << battle_menu_entry(:engine_open_pc, t(TR[:openpc])) { open_pc_menu } if open_pc_available?
       profile = cached_engine_profile
       render_dynamic_menu(_INTL("{1} | {2}", t(TR[:engine]).upcase, profile[:engine_family] || (profile[:modern_engine] ? "Modern/Hybrid" : "Legacy")), menu)
     end
 
+    def engine_fast_forward_select
+      stages = FAST_FORWARD_STAGES rescue [1.0, 1.5, 2.0, 3.0]
+      cmds = stages.map do |s|
+        tag = (s == current_fast_forward_multiplier) ? "[*] " : "[ ] "
+        tag + (s <= 1.0 ? "1.0x (Normal)" : sprintf("%.1fx Speed", s))
+      end
+      cmds.push(t(TR[:back]))
+      choice = Kernel.pbMessage(_INTL("Choose Fast Forward Speed:"), cmds, -1)
+      return if choice < 0 || choice >= stages.length
+      set_fast_forward_stage!(choice)
+      Kernel.pbMessage(_INTL("Game speed set to {1}.", current_fast_forward_label))
+    rescue StandardError => e
+      log_error("Engine Fast Forward Select", e)
+    end
     def engine_warp
       mapinfos = get_map_infos
       return Kernel.pbMessage(_INTL("MapInfos.rxdata not found!")) unless mapinfos
@@ -113,6 +132,140 @@ module DeveloperMenu
       else
         Kernel.pbMessage(engine_failure_message("warp"))
       end
+    end
+
+    def engine_weather
+      weather_options = [
+        ["Clear / Nenhum", :None, 0],
+        ["Chuva / Rain", :Rain, 1],
+        ["Tempestade / Storm", :Storm, 2],
+        ["Neve / Snow", :Snow, 3],
+        ["Nevasca / Blizzard", :Blizzard, 3],
+        ["Tempestade de Areia / Sandstorm", :Sandstorm, 0],
+        ["Sol Forte / Sun", :Sun, 0],
+        ["Nevoeiro / Fog", :Fog, 0],
+        ["Chuva Forte / Heavy Rain", :HeavyRain, 1]
+      ]
+      cmds = weather_options.map { |opt| opt[0] }
+      cmds.push(t(TR[:back]))
+      cmd = Kernel.pbMessage(_INTL("Select Overworld Weather:"), cmds, -1)
+      return if cmd < 0 || cmd >= weather_options.length
+      selected = weather_options[cmd]
+      label = selected[0]
+      sym = selected[1]
+      num = selected[2]
+      applied = false
+      if defined?(pbSetWeather)
+        begin
+          pbSetWeather(sym, 9999)
+          applied = true
+        rescue StandardError => e
+          log_error("pbSetWeather", e)
+        end
+      end
+      if !applied && $game_screen && $game_screen.respond_to?(:weather)
+        begin
+          $game_screen.weather(num, 9, 20)
+          applied = true
+        rescue StandardError => e
+          log_error("game_screen.weather", e)
+        end
+      end
+      if applied
+        $game_map.need_refresh = true if $game_map && $game_map.respond_to?(:need_refresh=)
+        Kernel.pbMessage(_INTL("Overworld weather set to {1}.", label))
+      else
+        Kernel.pbMessage(engine_failure_message("set weather"))
+      end
+    rescue StandardError => e
+      log_error("Engine Weather", e)
+      Kernel.pbMessage(engine_failure_message("change weather"))
+    end
+
+    def engine_time
+      time_options = [
+        ["Dia (Day)", Tone.new(0, 0, 0, 0)],
+        ["Noite (Night)", Tone.new(-100, -100, -20, 0)],
+        ["Entardecer (Dusk)", Tone.new(10, -40, -50, 0)],
+        ["Amanhecer (Dawn)", Tone.new(-30, -30, 10, 0)],
+        ["Restaurar Padrao (Real Clock)", nil]
+      ]
+      cmds = time_options.map { |opt| opt[0] }
+      cmds.push(t(TR[:back]))
+      cmd = Kernel.pbMessage(_INTL("Select Lighting / Time Tone:"), cmds, -1)
+      return if cmd < 0 || cmd >= time_options.length
+      selected_tone = time_options[cmd][1]
+      if selected_tone.nil?
+        if defined?(PBDayNight) && PBDayNight.respond_to?(:getTone)
+          tone = PBDayNight.getTone rescue Tone.new(0, 0, 0, 0)
+          $game_screen.start_tone_change(tone, 20) if $game_screen && $game_screen.respond_to?(:start_tone_change)
+        elsif $game_screen && $game_screen.respond_to?(:start_tone_change)
+          $game_screen.start_tone_change(Tone.new(0, 0, 0, 0), 20)
+        end
+        Kernel.pbMessage(_INTL("Lighting tone restored to default clock."))
+      else
+        if $game_screen && $game_screen.respond_to?(:start_tone_change)
+          $game_screen.start_tone_change(selected_tone, 20)
+          Kernel.pbMessage(_INTL("Lighting tone set to {1}.", time_options[cmd][0]))
+        else
+          Kernel.pbMessage(engine_failure_message("change lighting tone"))
+        end
+      end
+    rescue StandardError => e
+      log_error("Engine Time", e)
+      Kernel.pbMessage(engine_failure_message("change time/lighting"))
+    end
+
+    def engine_force_save
+      old_disabled = false
+      if $game_system && $game_system.respond_to?(:save_disabled)
+        old_disabled = $game_system.save_disabled
+        $game_system.save_disabled = false
+      end
+      saved = false
+      if defined?(pbSaveScreen)
+        saved = pbSaveScreen rescue false
+      elsif defined?(SaveData) && SaveData.respond_to?(:save_to_file)
+        saved = (SaveData.save_to_file rescue false)
+      elsif defined?(pbEmergencySave)
+        saved = (pbEmergencySave rescue false)
+      elsif defined?(Scene_Save)
+        $scene = Scene_Save.new rescue nil
+        saved = true
+      elsif defined?(Game) && Game.respond_to?(:save)
+        saved = (Game.save rescue false)
+      end
+      if saved
+        Kernel.pbMessage(_INTL("Game saved successfully!"))
+      else
+        if old_disabled && $game_system && $game_system.respond_to?(:save_disabled=)
+          $game_system.save_disabled = old_disabled
+        end
+        Kernel.pbMessage(engine_failure_message("save game"))
+      end
+    rescue StandardError => e
+      log_error("Engine Force Save", e)
+      Kernel.pbMessage(engine_failure_message("emergency save"))
+    end
+
+    def engine_unstuck
+      if $game_player
+        $game_player.through = true if $game_player.respond_to?(:through=)
+        $game_player.unlock if $game_player.respond_to?(:unlock)
+        $game_player.straighten if $game_player.respond_to?(:straighten)
+        $game_player.clear_move_route if $game_player.respond_to?(:clear_move_route)
+      end
+      if $game_system
+        if $game_system.respond_to?(:map_interpreter) && $game_system.map_interpreter
+          $game_system.map_interpreter.clear if $game_system.map_interpreter.respond_to?(:clear)
+        end
+        $game_system.menu_disabled = false if $game_system.respond_to?(:menu_disabled=)
+      end
+      $game_temp.common_event_id = 0 if defined?($game_temp) && $game_temp && $game_temp.respond_to?(:common_event_id=)
+      Kernel.pbMessage(_INTL("Player unstuck! Collisions passed and locks cleared."))
+    rescue StandardError => e
+      log_error("Engine Unstuck", e)
+      Kernel.pbMessage(engine_failure_message("unstuck player"))
     end
   end
 end
@@ -313,6 +466,43 @@ end
       Kernel.pbMessage(_INTL("You aren't in the Safari Zone or a Bug-Catching Contest!"))
     end
 
+    def active_battle_field_effect_id
+      return $fMan.currentField if defined?($fMan) && $fMan && $fMan.respond_to?(:currentField)
+      return $fMan.field if defined?($fMan) && $fMan && $fMan.respond_to?(:field)
+      return $game_screen.field if defined?($game_screen) && $game_screen && $game_screen.respond_to?(:field)
+      battle = current_battle_object if respond_to?(:current_battle_object)
+      return battle.field.effect if battle && battle.respond_to?(:field) && battle.field && battle.field.respond_to?(:effect)
+      0
+    rescue StandardError
+      0
+    end
+
+    def set_battle_field_effect_id!(field_id)
+      val = field_id.to_i
+      set_any = false
+      if defined?($fMan) && $fMan
+        if $fMan.respond_to?(:currentField=)
+          $fMan.currentField = val
+          set_any = true
+        elsif $fMan.respond_to?(:field=)
+          $fMan.field = val
+          set_any = true
+        end
+      end
+      if defined?($game_screen) && $game_screen && $game_screen.respond_to?(:field=)
+        $game_screen.field = val
+        set_any = true
+      end
+      battle = current_battle_object if respond_to?(:current_battle_object)
+      if battle && battle.respond_to?(:field) && battle.field && battle.field.respond_to?(:effect=)
+        battle.field.effect = val
+        set_any = true
+      end
+      set_any
+    rescue => e
+      log_error("Set Battle Field Effect", e)
+      false
+    end
     def engine_field_effects
       cmd = 0
       loop do
@@ -328,6 +518,8 @@ end
         cmds.push((higher_rate ? "[Y]" : "[  ]") + " " + _INTL("Higher encounter rate"))
         cmds.push((lower_level ? "[Y]" : "[  ]") + " " + _INTL("Lower level wild Pokemon"))
         cmds.push((higher_level ? "[Y]" : "[  ]") + " " + _INTL("Higher level wild Pokemon"))
+        has_custom_field = (defined?($fMan) && $fMan) || (defined?($game_screen) && $game_screen && $game_screen.respond_to?(:field)) || defined?(FieldEffects)
+        cmds.push(_INTL("Battle Field: {1}", active_battle_field_effect_id)) if has_custom_field
         cmds.push(t(TR[:back]))
         cmd = pbShowCommands(nil, cmds, -1, cmd)
         break if cmd < 0 || cmd == cmds.length - 1
@@ -338,7 +530,7 @@ end
           current = get_repel_steps || 0
           params.setDefaultValue(current) if params.respond_to?(:setDefaultValue)
           params.setInitialValue(current) if params.respond_to?(:setInitialValue)
-          set_repel_steps(pbMessageChooseNumber(_INTL("Set the Pokemon's level."), params))
+          set_repel_steps(pbMessageChooseNumber(_INTL("Set the number of repel steps."), params))
         when 1
           set_strength_enabled!(!strength_enabled?)
         when 2
@@ -359,6 +551,14 @@ end
         when 6
           current = get_map_toggle(:higher_level_wild_pokemon)
           set_map_toggle(!current, :higher_level_wild_pokemon)
+        when 7
+          params = ChooseNumberParams.new
+          params.setRange(0, 37)
+          current_f = active_battle_field_effect_id
+          params.setDefaultValue(current_f) if params.respond_to?(:setDefaultValue)
+          params.setInitialValue(current_f) if params.respond_to?(:setInitialValue)
+          new_field = pbMessageChooseNumber(_INTL("Choose Battle Field Effect ID (0-37):"), params)
+          set_battle_field_effect_id!(new_field)
         end
       end
     end

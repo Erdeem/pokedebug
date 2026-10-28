@@ -177,76 +177,6 @@ module DeveloperMenu
       end
     end
 
-    def forget_move!(pkmn, index)
-      return false unless pkmn && pkmn.respond_to?(:moves) && pkmn.moves
-      return false if index.nil? || index < 0
-      if pkmn.moves.respond_to?(:delete_at)
-        !!pkmn.moves.delete_at(index)
-      elsif pkmn.moves.respond_to?(:DeleteAt)
-        !!pkmn.moves.DeleteAt(index)
-      else
-        false
-      end
-    rescue => e
-      log_error("Forget Move", e)
-      false
-    end
-
-    def reset_pokemon_moves!(pkmn)
-      return false unless pkmn
-      if respond_to?(:engine_adapter_for)
-        adapter_result = engine_adapter_for(:moves).reset_moves(pkmn)
-        return adapter_result[1] if adapter_result && adapter_result[0]
-      end
-      pkmn.reset_moves if pkmn.respond_to?(:reset_moves)
-      pkmn.resetMoves if pkmn.respond_to?(:resetMoves)
-      true
-    rescue => e
-      log_error("Reset Moveset", e)
-      false
-    end
-
-    def record_pokemon_initial_moves!(pkmn)
-      return false unless pkmn
-      pkmn.record_first_moves if pkmn.respond_to?(:record_first_moves)
-      true
-    rescue => e
-      log_error("Record Initial Moves", e)
-      false
-    end
-
-    def restore_pokemon_pp!(pkmn)
-      return false unless pkmn
-      restored = false
-      if respond_to?(:engine_adapter_for)
-        adapter_result = engine_adapter_for(:moves).restore_pp(pkmn)
-        restored = !!adapter_result[1] if adapter_result && adapter_result[0]
-      end
-      unless restored
-        pkmn.heal_PP if pkmn.respond_to?(:heal_PP)
-        pkmn.healPP if pkmn.respond_to?(:healPP)
-      end
-      # Engine healing normally rebuilds PP from the move database. Reapply
-      # PokeDebug's persistent per-move limits after either adapter path.
-      if respond_to?(:apply_custom_pp_limits_to_pokemon!)
-        apply_custom_pp_limits_to_pokemon!(pkmn, true)
-      end
-      true
-    rescue => e
-      log_error("Restore PP", e)
-      false
-    end
-
-    def max_pokemon_ppups!(pkmn, value = 3)
-      return false unless pkmn
-      each_move_slot(pkmn) do |move, _index|
-        move.ppup = value if move && move.respond_to?(:ppup=)
-      end
-      true
-    rescue => e
-      log_error("Max PP Ups", e)
-      false
-    end
 
     def duplicate_pokemon(pkmn)
       clone = try_call("Duplicate Pokemon Clone") { pkmn.clone }
@@ -437,10 +367,27 @@ module DeveloperMenu
         move_object = adapter_result[1] if adapter_result && adapter_result[0]
       end
       if defined?(PBMove)
-        move_object ||= try_call("Create Legacy Move") { PBMove.new(move_symbol) }
+        move_object ||= try_call("Create Legacy Move Symbol") { PBMove.new(move_symbol) }
+        if !move_object && defined?(PBMoves)
+          num_id = get_symbol(:Move, move_symbol) rescue nil
+          num_id ||= (PBMoves.const_get(move_symbol) rescue nil) if move_symbol.is_a?(Symbol)
+          move_object ||= try_call("Create Legacy Move Int") { PBMove.new(num_id) } if num_id
+        end
       end
       if !move_object && defined?(Pokemon) && safe_const_get(Pokemon, :Move)
         move_object = try_call("Create Modern Move") { Pokemon::Move.new(move_symbol) }
+      end
+      if !move_object && defined?(Battle) && safe_const_get(Battle, :Move)
+        move_object = try_call("Create Battle Move") { Battle::Move.new(move_symbol) }
+      end
+      if !move_object && defined?(Move)
+        move_object = try_call("Create Generic Move") { Move.new(move_symbol) }
+      end
+      if !move_object && pkmn.respond_to?(:pbLearnMove)
+        return true if pkmn.pbLearnMove(move_symbol)
+      end
+      if !move_object && pkmn.respond_to?(:learn_move)
+        return true if pkmn.learn_move(move_symbol)
       end
       return false unless move_object
 
@@ -545,9 +492,24 @@ module DeveloperMenu
       pkmn.ball_used = sym if pkmn.respond_to?(:ball_used=)
     end
 
+    def item_is_poke_ball?(item)
+      return false if item.nil?
+      return item.is_poke_ball? if item.respond_to?(:is_poke_ball?)
+      if defined?(GameData) && safe_const_get(GameData, :Item)
+        record = GameData::Item.try_get(item) rescue nil
+        return record.is_poke_ball? if record && record.respond_to?(:is_poke_ball?)
+      end
+      return pbIsPokeBall?(item) if defined?(pbIsPokeBall?)
+      name = item_display_name(item).to_s.downcase
+      return true if name.include?("ball") && !name.include?("balloon") && !name.include?("iron ball") && !name.include?("light ball") && !name.include?("smoke ball")
+      false
+    rescue => e
+      false
+    end
+
     def choose_poke_ball_id
       hash = build_search_hash(:Item) do |item|
-        item.is_poke_ball? rescue false
+        item_is_poke_ball?(item)
       end
       hash = build_search_hash(:Item) if hash.empty?
       search_list("Poke Balls", hash)

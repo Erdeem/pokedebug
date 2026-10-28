@@ -164,10 +164,14 @@ module DeveloperMenu
 
     def reset_pokemon_moves!(pkmn)
       return false unless pkmn
-      if pkmn.respond_to?(:resetMoves)
-        pkmn.resetMoves
-      elsif pkmn.respond_to?(:reset_moves)
+      if respond_to?(:engine_adapter_for)
+        adapter_result = engine_adapter_for(:moves).reset_moves(pkmn)
+        return adapter_result[1] if adapter_result && adapter_result[0]
+      end
+      if pkmn.respond_to?(:reset_moves)
         pkmn.reset_moves
+      elsif pkmn.respond_to?(:resetMoves)
+        pkmn.resetMoves
       elsif pkmn.respond_to?(:pbLearnMove) && pkmn.respond_to?(:species) && pkmn.respond_to?(:level)
         moved = false
         level_up_moves_for(pkmn).each do |entry|
@@ -185,7 +189,12 @@ module DeveloperMenu
     end
 
     def record_pokemon_initial_moves!(pkmn)
-      return false unless pkmn && pkmn.respond_to?(:moves)
+      return false unless pkmn
+      if pkmn.respond_to?(:record_first_moves)
+        pkmn.record_first_moves
+        return true
+      end
+      return false unless pkmn.respond_to?(:moves)
       move_ids = pkmn.moves.compact.map { |move| move_identifier(move) }.compact
       return false if move_ids.empty?
       if pkmn.respond_to?(:first_moves=)
@@ -395,15 +404,35 @@ module DeveloperMenu
 
     def restore_pokemon_pp!(pkmn)
       return false unless pkmn
-      sync_pokemon_custom_pp_limits!(pkmn)
-      changed = false
-      each_move_slot(pkmn) do |move, _index|
-        next unless move
-        total_pp = pokemon_move_total_pp_value(move)
-        next if total_pp.nil?
-        changed = set_pokemon_move_pp!(move, total_pp) || changed
+      restored = false
+      if respond_to?(:engine_adapter_for)
+        adapter_result = engine_adapter_for(:moves).restore_pp(pkmn)
+        restored = !!adapter_result[1] if adapter_result && adapter_result[0]
       end
-      changed
+      unless restored
+        if pkmn.respond_to?(:heal_PP)
+          pkmn.heal_PP
+          restored = true
+        elsif pkmn.respond_to?(:healPP)
+          pkmn.healPP
+          restored = true
+        end
+      end
+      unless restored
+        sync_pokemon_custom_pp_limits!(pkmn) if respond_to?(:sync_pokemon_custom_pp_limits!)
+        changed = false
+        each_move_slot(pkmn) do |move, _index|
+          next unless move
+          total_pp = pokemon_move_total_pp_value(move)
+          next if total_pp.nil?
+          changed = set_pokemon_move_pp!(move, total_pp) || changed
+        end
+        restored = changed || true
+      end
+      if respond_to?(:apply_custom_pp_limits_to_pokemon!)
+        apply_custom_pp_limits_to_pokemon!(pkmn, true)
+      end
+      true
     rescue => e
       log_error("Restore Pokemon PP", e)
       false

@@ -696,6 +696,33 @@ class << ::DeveloperMenu
     false
   end
 
+  def patch_fast_forward_animation_class!
+    return false unless defined?(SpriteAnimation) && SpriteAnimation.is_a?(Class)
+    return true if SpriteAnimation.instance_variable_get(:@pokedebug_ff_anim_patched)
+    SpriteAnimation.instance_variable_set(:@pokedebug_ff_anim_patched, true)
+    if SpriteAnimation.method_defined?(:update_animation) && !SpriteAnimation.method_defined?(:_gm_orig_update_animation_dev)
+      SpriteAnimation.class_eval do
+        alias_method :_gm_orig_update_animation_dev, :update_animation
+        def update_animation
+          if @_animation_duration && @_animation_timer_start && @_animation_time_per_frame && @_animation_time_per_frame > 0
+            cur_time = defined?(System) && System.respond_to?(:uptime) ? System.uptime : Time.now.to_f
+            new_idx = ((cur_time - @_animation_timer_start) / @_animation_time_per_frame).to_i
+            if new_idx >= @_animation_duration
+              dispose_animation if respond_to?(:dispose_animation)
+              return
+            end
+          end
+          _gm_orig_update_animation_dev
+        rescue StandardError
+          dispose_animation if respond_to?(:dispose_animation)
+        end
+      end
+    end
+    true
+  rescue StandardError => e
+    ::DeveloperMenu.log_error("Patch Fast Forward Animation Class", e) if ::DeveloperMenu.respond_to?(:log_error)
+    false
+  end
   def apply_runtime_patches!(force = false)
     legacy_rgss1 = defined?(RUBY_VERSION) && RUBY_VERSION.to_s.index("1.8") == 0
     apply_patch_step!("Clamp Compatibility") { apply_clamp_compatibility_patch! }

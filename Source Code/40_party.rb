@@ -418,6 +418,18 @@ module DeveloperMenu
             Kernel.pbMessage(_INTL("No legal abilities found."))
           end
         },
+        battle_menu_entry(:party_ability_slot, t(TR[:set_ability_slot])) {
+          slot_cmds = ["Slot 1 (Ability 1)", "Slot 2 (Ability 2)", "Slot 3 / Hidden (Ability Oculta)"]
+          slot_choice = Kernel.pbMessage(_INTL("Select Ability Slot:"), slot_cmds, -1)
+          if slot_choice >= 0
+            if set_pokemon_ability_slot!(pkmn, slot_choice)
+              curr_ab = pkmn.respond_to?(:ability) ? pkmn.ability : nil
+              notify_action_result("#{pkmn.name} Ability Slot", true, "set to #{slot_choice} (#{ability_display_name(curr_ab)}).", "failed.")
+            else
+              Kernel.pbMessage(unsupported_feature_message("Ability Slot setting"))
+            end
+          end
+        },
         battle_menu_entry(:party_ability_search_any, t(TR[:search_any_ability])) {
           hash = build_search_hash(:Ability)
           id = search_list("Abilities", hash)
@@ -514,6 +526,17 @@ module DeveloperMenu
             Kernel.pbMessage(engine_failure_message("change form"))
           end
         end,
+        simple_menu_action(t(TR[:set_form_override])) do
+          current_ov = respond_to?(:pokemon_form_override_value) ? pokemon_form_override_value(pkmn) : nil
+          default_v = current_ov.nil? ? (pkmn.form || 0) : current_ov
+          params = ChooseNumberParams.new; params.setRange(0, 50); params.setInitialValue(default_v)
+          form_id = Kernel.pbMessageChooseNumber(_INTL("Lock Pokemon to Form ID:"), params)
+          if set_pokemon_form_override!(pkmn, form_id)
+            notify_action_result("#{pkmn.name} Form Lock", true, "locked to form #{form_id} permanently.", "failed.")
+          else
+            Kernel.pbMessage(engine_failure_message("set form override"))
+          end
+        end,
         simple_menu_action(t(TR[:remove_form_override])) do
           if clear_pokemon_form_override!(pkmn)
             notify_action_result("#{pkmn.name} Form Override", true, "removed.", "failed.")
@@ -531,7 +554,7 @@ module DeveloperMenu
           rename_pokemon_via_ui!(pkmn)
         end,
         simple_menu_action(t(TR[:toggle_shiny])) do
-          current = pkmn.respond_to?(:shiny?) ? pkmn.shiny? : (pkmn.respond_to?(:shiny) ? pkmn.shiny : false)
+          current = pokemon_shiny_state(pkmn)
           if set_pokemon_shiny!(pkmn, !current)
             Kernel.pbMessage(state_toggle_message("#{pkmn.name} Shiny", !current))
           else
@@ -576,6 +599,75 @@ module DeveloperMenu
 
     def party_flags(pkmn)
       menu = [
+        simple_menu_action(t(TR[:set_tera_type])) do
+          if pkmn.respond_to?(:tera_type=) || pkmn.respond_to?(:forced_tera_type=)
+            current_tera = pokemon_tera_type(pkmn)
+            type_hash = build_search_hash(:Type)
+            type_id = search_list("Tera Types", type_hash)
+            if type_id
+              sym = get_symbol(:Type, type_id)
+              if set_pokemon_tera_type!(pkmn, sym)
+                notify_action_result("#{pkmn.name} Tera Type", true, "set to #{sym}.", "failed.")
+              else
+                Kernel.pbMessage(engine_failure_message("set Tera Type"))
+              end
+            end
+          else
+            Kernel.pbMessage(unsupported_feature_message("Tera Type (Gen 9)"))
+          end
+        end,
+        simple_menu_action(t(TR[:toggle_gmax])) do
+          if pkmn.respond_to?(:gmax_factor=) || pkmn.respond_to?(:giveGmaxFactor)
+            current_gmax = pokemon_gmax_factor?(pkmn)
+            if set_pokemon_gmax_factor!(pkmn, !current_gmax)
+              Kernel.pbMessage(state_toggle_message("#{pkmn.name} Gigantamax Factor", !current_gmax))
+            else
+              Kernel.pbMessage(engine_failure_message("toggle Gigantamax Factor"))
+            end
+          else
+            Kernel.pbMessage(unsupported_feature_message("Gigantamax Factor (Gen 8)"))
+          end
+        end,
+        simple_menu_action(t(TR[:toggle_shadow])) do
+          if pkmn.respond_to?(:shadowPokemon?) || pkmn.respond_to?(:makeShadow) || pkmn.respond_to?(:shadow=)
+            current_shadow = pokemon_shadow?(pkmn)
+            if set_pokemon_shadow!(pkmn, !current_shadow)
+              Kernel.pbMessage(state_toggle_message("#{pkmn.name} Shadow State", !current_shadow))
+            else
+              Kernel.pbMessage(engine_failure_message("toggle Shadow State"))
+            end
+          else
+            Kernel.pbMessage(unsupported_feature_message("Shadow Pokemon"))
+          end
+        end,
+        simple_menu_action(t(TR[:edit_heart_gauge])) do
+          if pkmn.respond_to?(:heartgauge) || pkmn.respond_to?(:heart_gauge)
+            params = ChooseNumberParams.new; params.setRange(0, 30000); params.setInitialValue(pokemon_heart_gauge(pkmn) || 0)
+            new_heart = Kernel.pbMessageChooseNumber(_INTL("Heart Gauge:"), params)
+            if set_pokemon_heart_gauge!(pkmn, new_heart)
+              notify_action_result("#{pkmn.name} Heart Gauge", true, "set to #{new_heart}.", "failed.")
+            else
+              Kernel.pbMessage(engine_failure_message("edit Heart Gauge"))
+            end
+          else
+            Kernel.pbMessage(unsupported_feature_message("Heart Gauge"))
+          end
+        end,
+        simple_menu_action(t(TR[:toggle_fateful])) do
+          current_fateful = pokemon_fateful_encounter?(pkmn)
+          if set_pokemon_fateful_encounter!(pkmn, !current_fateful)
+            Kernel.pbMessage(state_toggle_message("#{pkmn.name} Fateful Encounter", !current_fateful))
+          else
+            Kernel.pbMessage(engine_failure_message("toggle Fateful Encounter"))
+          end
+        end,
+        simple_menu_action(t(TR[:fix_obedience])) do
+          if make_pokemon_obedient!(pkmn)
+            notify_action_result("#{pkmn.name} Obedience", true, "now treats you as original trainer!", "failed.")
+          else
+            Kernel.pbMessage(engine_failure_message("adjust obedience"))
+          end
+        end,
         simple_menu_action(t(TR[:toggle_cannot_store])) do
           if pkmn.respond_to?(:cannot_store=)
             pkmn.cannot_store = !pkmn.cannot_store
@@ -664,6 +756,71 @@ module DeveloperMenu
       return unless Kernel.pbConfirmMessage(_INTL("Permanently delete this Pokemon?"))
       get_player.party.delete_at(index)
       notify_action_result("Party Pokemon", true, "deleted.", "failed.")
+    end
+
+    def party_trigger_evolution(pkmn)
+      return Kernel.pbMessage(_INTL("Eggs cannot evolve.")) if pokemon_egg_state(pkmn)
+      target_species = nil
+      # 1. Modern GameData::Species evolutions lookup
+      if defined?(GameData) && safe_const_get(GameData, :Species) && GameData::Species.respond_to?(:get)
+        spec_data = GameData::Species.get(pkmn.species) rescue nil
+        if spec_data && spec_data.respond_to?(:evolutions) && spec_data.evolutions && !spec_data.evolutions.empty?
+          cmds = spec_data.evolutions.map do |evo|
+            evo_spec = evo[0]
+            name = (GameData::Species.get(evo_spec).name rescue evo_spec.to_s)
+            _INTL("Evolve into {1}", name)
+          end
+          cmds.push(menu_back_label)
+          ch = Kernel.pbMessage(_INTL("Choose Evolution:"), cmds, -1)
+          if ch >= 0 && ch < spec_data.evolutions.length
+            target_species = spec_data.evolutions[ch][0]
+          end
+        end
+      end
+      # 2. Legacy check
+      if !target_species && defined?(pbCheckEvolution)
+        check_evo = pbCheckEvolution(pkmn) rescue nil
+        target_species = check_evo if check_evo && check_evo.to_i > 0
+      end
+      # 3. If no branches detected or manual pick requested
+      if !target_species
+        if Kernel.pbConfirmMessage(_INTL("No automatic evolution found. Search and select target species?"))
+          spec_hash = build_search_hash(:Species)
+          sel_id = search_list("Evolve To", spec_hash)
+          target_species = get_symbol(:Species, sel_id) if sel_id
+        end
+      end
+      return unless target_species
+
+      evolved = false
+      if defined?(pbEvolution)
+        begin
+          if defined?(pbFadeOutInWithUpdate)
+            pbFadeOutInWithUpdate { pbEvolution(pkmn, target_species) }
+          elsif defined?(pbFadeOutIn)
+            pbFadeOutIn { pbEvolution(pkmn, target_species) }
+          else
+            pbEvolution(pkmn, target_species)
+          end
+          evolved = true
+        rescue StandardError => e
+          log_error("pbEvolution", e)
+        end
+      end
+      if !evolved
+        if set_pokemon_species!(pkmn, target_species)
+          pkmn.reset_moves if pkmn.respond_to?(:reset_moves)
+          evolved = true
+        end
+      end
+      if evolved
+        notify_action_result("#{pkmn.name} Evolution", true, "evolved successfully!", "failed.")
+      else
+        Kernel.pbMessage(engine_failure_message("trigger evolution"))
+      end
+    rescue StandardError => e
+      log_error("Party Trigger Evolution", e)
+      Kernel.pbMessage(engine_failure_message("evolve Pokemon"))
     end
   end
 end

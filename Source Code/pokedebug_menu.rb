@@ -12,8 +12,17 @@
 # items, money, badges, and more. It also provides quick access to certain
 # features like warping to maps, toggling battle settings, and editing PBS files.
 #===============================================================================
+# Ruby 1.8.1 (standard RGSS1 / RPG Maker XP) compatibility polyfills
+unless Symbol.method_defined?(:to_proc)
+  class Symbol
+    def to_proc
+      proc { |obj, *args| obj.send(self, *args) }
+    end
+  end
+end
+
 module DeveloperMenu
-  VERSION = '3.1.4'
+  VERSION = '3.5.0'
   LOG_FILE_NAME = 'developer_menu_errors.log'
   STATE_FILE_NAME = 'developer_menu_boot_state.dat'
   LANG = 'en'
@@ -25,6 +34,7 @@ module DeveloperMenu
   MENU_HOTKEY = 'F6'
   WTW_HOTKEY = 'F5'
   HEAL_HOTKEY = 'F9'
+  SPEED_HOTKEY = 'F8'
   TR = {
     :dev_menu => {"English" => "PokeDebug Menu", "Portugues" => "PokeDebug Menu", "Espanol" => "PokeDebug Menu"},
     :engine => {"English" => "Engine", "Portugues" => "Engine do Jogo", "Espanol" => "Motor del Juego"},
@@ -136,6 +146,12 @@ module DeveloperMenu
     :test_trainer_battle => {"English" => "Test Trainer Battle", "Portugues" => "Testar Batalha de Treinador", "Espanol" => "Probar Batalla de Entrenador"},
     :test_trainer_battle_advanced => {"English" => "Test Trainer Battle Advanced", "Portugues" => "Testar Batalha de Treinador Avancada", "Espanol" => "Probar Batalla de Entrenador Avanzada"},
     :edit_safari_contest => {"English" => "Edit Safari/Contest", "Portugues" => "Editar Safari/Torneio", "Espanol" => "Editar Safari/Torneo"},
+    :fast_forward => {"English" => "Fast Forward Speed", "Portugues" => "Velocidade Fast Forward", "Espanol" => "Velocidad Fast Forward"},
+    :battle_win => {"English" => "Win Battle Immediately", "Portugues" => "Vencer Batalha Imediatamente", "Espanol" => "Ganar Batalla Inmediatamente"},
+    :battle_escape => {"English" => "Escape from Battle", "Portugues" => "Fugir da Batalha", "Espanol" => "Escapar de la Batalla"},
+    :battle_catch => {"English" => "Catch Wild Pokemon", "Portugues" => "Capturar Pokemon Selvagem", "Espanol" => "Capturar Pokemon Salvaje"},
+    :add_fusion => {"English" => "Add Fusion Pokemon", "Portugues" => "Adicionar Pokemon Fusao", "Espanol" => "Anadir Pokemon Fusion"},
+    :battle_field_effect => {"English" => "Battle Field Effect", "Portugues" => "Efeito de Campo de Batalha", "Espanol" => "Efecto de Campo de Batalla"},
     :field_effects_title => {"English" => "Field Effects", "Portugues" => "Efeitos de Campo", "Espanol" => "Efectos de Campo"},
     :wallpapers_title => {"English" => "Wallpapers", "Portugues" => "Wallpapers", "Espanol" => "Fondos"},
     :battle_tools_title => {"English" => "Battle Tools", "Portugues" => "Ferramentas de Batalha", "Espanol" => "Herramientas de Batalla"},
@@ -196,6 +212,7 @@ module DeveloperMenu
     :force_gender_genderless => {"English" => "Force Gender (Genderless)", "Portugues" => "Forcar Genero (Sem Genero)", "Espanol" => "Forzar Genero (Sin Genero)"},
     :change_species => {"English" => "Change Species", "Portugues" => "Mudar Especie", "Espanol" => "Cambiar Especie"},
     :change_form => {"English" => "Change Form", "Portugues" => "Mudar Forma", "Espanol" => "Cambiar Forma"},
+    :set_form_override => {"English" => "Set Form Override (Lock Form)", "Portugues" => "Definir Override de Forma (Travar Forma)", "Espanol" => "Fijar Override de Forma (Bloquear Forma)"},
     :remove_form_override => {"English" => "Remove Form Override", "Portugues" => "Remover Override de Forma", "Espanol" => "Quitar Override de Forma"},
     :set_nickname => {"English" => "Set Nickname", "Portugues" => "Definir Apelido", "Espanol" => "Definir Apodo"},
     :toggle_shiny => {"English" => "Toggle Shiny", "Portugues" => "Alternar Shiny", "Espanol" => "Alternar Shiny"},
@@ -208,6 +225,19 @@ module DeveloperMenu
     :toggle_cannot_trade => {"English" => "Toggle Cannot Trade", "Portugues" => "Alternar Nao Pode Trocar", "Espanol" => "Alternar No se Puede Intercambiar"},
     :make_egg => {"English" => "Make Egg", "Portugues" => "Transformar em Ovo", "Espanol" => "Convertir en Huevo"},
     :hatch_egg => {"English" => "Hatch Egg", "Portugues" => "Chocar Ovo", "Espanol" => "Eclosionar Huevo"},
+        :toggle_gmax => {"English" => "Toggle Gigantamax Factor", "Portugues" => "Alternar Fator Gigantamax", "Espanol" => "Alternar Factor Gigantamax"},
+    :set_tera_type => {"English" => "Set Tera Type", "Portugues" => "Definir Tera Type", "Espanol" => "Definir Teratipo"},
+    :toggle_shadow => {"English" => "Toggle Shadow Pokemon", "Portugues" => "Alternar Shadow Pokemon", "Espanol" => "Alternar Pokemon Oscuro"},
+    :edit_heart_gauge => {"English" => "Edit Heart Gauge", "Portugues" => "Editar Barra do Coracao", "Espanol" => "Editar Barra del Corazon"},
+    :toggle_fateful => {"English" => "Toggle Fateful Encounter", "Portugues" => "Alternar Encontro Marcado (Fateful)", "Espanol" => "Alternar Encuentro Fatidico"},
+    :fix_obedience => {"English" => "Make 100% Obedient (Match OT)", "Portugues" => "Tornar 100% Obediente (Ajustar OT)", "Espanol" => "Hacer 100% Obediente (Ajustar OT)"},
+    :set_ability_slot => {"English" => "Set Ability Slot (1, 2, Hidden)", "Portugues" => "Definir Slot de Habilidade (1, 2, Oculta)", "Espanol" => "Definir Espacio de Habilidad (1, 2, Oculta)"},
+    :weather_title => {"English" => "Overworld Weather", "Portugues" => "Clima do Mapa (Overworld)", "Espanol" => "Clima del Mapa (Overworld)"},
+    :time_title => {"English" => "Time of Day / Lighting", "Portugues" => "Hora do Dia / Iluminacao", "Espanol" => "Hora del Dia / Iluminacion"},
+        :force_save => {"English" => "Emergency / Force Save Game", "Portugues" => "Salvar Jogo Forcado / Emergencial", "Espanol" => "Guardar Partida Forzado / Emergencia"},
+    :unstuck_player => {"English" => "Emergency Unstuck Player", "Portugues" => "Desprender / Destravar Jogador", "Espanol" => "Desatascar / Destrabar Jugador"},
+    :trigger_evolution => {"English" => "Trigger Evolution", "Portugues" => "Disparar Evolucao", "Espanol" => "Activar Evolucion"},
+        :check_updates => {"English" => "Check for Updates", "Portugues" => "Verificar Atualizacoes", "Espanol" => "Buscar Actualizaciones"},
     :one_step_hatch => {"English" => "1 Step to Hatch", "Portugues" => "1 Passo para Chocar", "Espanol" => "1 Paso para Eclosionar"}
   }
 end
@@ -227,6 +257,11 @@ module DeveloperMenu
       @skip_trainer_battles = false
       @no_battles = false
       @inf_mega = false
+      @fast_forward_stage = 0
+      @fast_forward_multiplier = 1.0
+      @fast_forward_virtual_base = 0.0
+      @last_speed_change_real = 0.0
+      @original_frame_rate = nil
       @processing_hotkey = false
       @menu_open = false
       @menu_session_serial = 0
@@ -1262,7 +1297,8 @@ module DeveloperMenu
       {
         :menu => MENU_HOTKEY,
         :walk_through_walls => WTW_HOTKEY,
-        :heal_party => HEAL_HOTKEY
+        :heal_party => HEAL_HOTKEY,
+        :fast_forward => SPEED_HOTKEY
       }
     end
 
@@ -3143,6 +3179,7 @@ module DeveloperMenu
 
     def pokemon_species_name(pkmn)
       return "Unknown" unless pkmn
+      return pkmn.species_name if pkmn.respond_to?(:species_name) && pkmn.species_name
       return pkmn.speciesName if pkmn.respond_to?(:speciesName) && pkmn.speciesName
       species_id = pkmn.species if pkmn.respond_to?(:species)
       record = data_record(:Species, species_id)
@@ -3236,6 +3273,7 @@ module DeveloperMenu
       return false unless pkmn
       return pkmn.shiny? if pkmn.respond_to?(:shiny?)
       return pkmn.shiny if pkmn.respond_to?(:shiny)
+      return pkmn.isShiny? if pkmn.respond_to?(:isShiny?)
       false
     rescue => e
       log_error("Pokemon Shiny State", e)
@@ -3268,8 +3306,10 @@ module DeveloperMenu
       status = pokemon_status_label(pkmn)
       shiny_tag = pokemon_shiny_state(pkmn) ? " *Shiny*" : ""
       egg_tag = pokemon_egg_state(pkmn) ? " [Egg]" : ""
+      override_val = pokemon_form_override_value(pkmn)
+      override_tag = override_val.nil? ? "" : " [Form:#{override_val}]"
       hp_text = hp.nil? || total_hp.nil? ? "" : " HP #{hp}/#{total_hp}"
-      "#{name} (Lv.#{level})#{egg_tag}#{shiny_tag}#{hp_text} #{status}"
+      "#{name} (Lv.#{level})#{egg_tag}#{shiny_tag}#{override_tag}#{hp_text} #{status}"
     rescue => e
       log_error("Pokemon Party Label", e)
       "Unknown Pokemon"
@@ -3408,12 +3448,100 @@ module DeveloperMenu
       false
     end
 
+    def pokemon_form_override_value(pkmn)
+      return nil unless pkmn
+      override = pkmn.instance_variable_get(:@pokedebug_form_override)
+      return override.to_i if !override.nil?
+      return pkmn.forced_form.to_i if pkmn.respond_to?(:forced_form) && !pkmn.forced_form.nil?
+      nil
+    rescue StandardError => e
+      log_error("Pokemon Form Override Value", e)
+      nil
+    end
+
+    def patch_form_override_class!(klass)
+      return false unless klass
+      return true if klass.instance_variable_get(:@pokedebug_form_override_patched)
+      klass.instance_variable_set(:@pokedebug_form_override_patched, true)
+      if klass.method_defined?(:form) && !klass.method_defined?(:_pokedebug_orig_form_dev)
+        klass.class_eval do
+          alias_method :_pokedebug_orig_form_dev, :form
+          def form(*args)
+            override = instance_variable_get(:@pokedebug_form_override)
+            return override.to_i if !override.nil?
+            _pokedebug_orig_form_dev(*args)
+          end
+        end
+      end
+      [:makeUnmega, :make_unmega, :reset_form, :makeUnprimal, :make_unprimal].each do |m|
+        orig_m = :"_pokedebug_orig_#{m}_dev"
+        if klass.method_defined?(m) && !klass.method_defined?(orig_m)
+          klass.class_eval do
+            alias_method orig_m, m
+            define_method(m) do |*args|
+              res = send(orig_m, *args)
+              override = instance_variable_get(:@pokedebug_form_override)
+              if !override.nil?
+                self.form = override.to_i if respond_to?(:form=)
+                self.forced_form = override.to_i if respond_to?(:forced_form=)
+                calc_stats if respond_to?(:calc_stats)
+                calcStats if respond_to?(:calcStats)
+              end
+              res
+            end
+          end
+        end
+      end
+      true
+    rescue StandardError => e
+      log_error("Patch Form Override Class", e)
+      false
+    end
+
+    def set_pokemon_form_override!(pkmn, form_id)
+      return false unless pkmn
+      form = form_id.to_i
+      patch_form_override_class!(pkmn.class)
+      pkmn.instance_variable_set(:@pokedebug_form_override, form)
+      pkmn.forced_form = form if pkmn.respond_to?(:forced_form=)
+      pkmn.form_simple = form if pkmn.respond_to?(:form_simple=)
+      pkmn.form = form if pkmn.respond_to?(:form=)
+      pkmn.setForm(form) if pkmn.respond_to?(:setForm)
+      recalc_pokemon_stats(pkmn)
+      true
+    rescue StandardError => e
+      log_error("Set Form Override", e)
+      false
+    end
+
+    def ensure_pokemon_form_overrides_persistence!
+      party = player_party rescue []
+      return unless party && party.is_a?(Array)
+      party.each do |pkmn|
+        next unless pkmn
+        override = pkmn.instance_variable_get(:@pokedebug_form_override)
+        next if override.nil?
+        patch_form_override_class!(pkmn.class)
+        current_f = pkmn.respond_to?(:form) ? pkmn.form : nil
+        if current_f != override.to_i
+          pkmn.form = override.to_i if pkmn.respond_to?(:form=)
+          pkmn.forced_form = override.to_i if pkmn.respond_to?(:forced_form=)
+          recalc_pokemon_stats(pkmn)
+        end
+      end
+    rescue StandardError => e
+      log_error("Ensure Form Overrides Persistence", e)
+    end
     def clear_pokemon_form_override!(pkmn)
       return false unless pkmn
+      pkmn.instance_variable_set(:@pokedebug_form_override, nil)
       pkmn.forced_form = nil if pkmn.respond_to?(:forced_form=)
       pkmn.form_simple = nil if pkmn.respond_to?(:form_simple=)
+      pkmn.form = 0 if pkmn.respond_to?(:form=)
+      pkmn.setForm(0) if pkmn.respond_to?(:setForm)
+      recalc_pokemon_stats(pkmn)
       true
-    rescue => e
+    rescue StandardError => e
       log_error("Clear Form Override", e)
       false
     end
@@ -3459,9 +3587,11 @@ module DeveloperMenu
       return false unless pkmn
       pkmn.name = "Egg" if pkmn.respond_to?(:name=)
       pkmn.egg_steps = 255 if pkmn.respond_to?(:egg_steps=)
+      pkmn.eggsteps = 255 if pkmn.respond_to?(:eggsteps=)
       recalc_pokemon_stats(pkmn)
       return pokemon_egg_state(pkmn) if pkmn.respond_to?(:egg?) || pkmn.respond_to?(:isEgg?)
       return pkmn.egg_steps.to_i == 255 if pkmn.respond_to?(:egg_steps)
+      return pkmn.eggsteps.to_i == 255 if pkmn.respond_to?(:eggsteps)
       true
     rescue => e
       log_error("Make Egg", e)
@@ -3470,8 +3600,10 @@ module DeveloperMenu
 
     def hatch_pokemon_egg!(pkmn)
       return false unless pkmn
-      pkmn.name = pkmn.speciesName if pkmn.respond_to?(:name=) && pkmn.respond_to?(:speciesName)
+      species_name = pokemon_species_name(pkmn)
+      pkmn.name = species_name if pkmn.respond_to?(:name=) && species_name && species_name != "Unknown"
       pkmn.egg_steps = 0 if pkmn.respond_to?(:egg_steps=)
+      pkmn.eggsteps = 0 if pkmn.respond_to?(:eggsteps=)
       recalc_pokemon_stats(pkmn)
       true
     rescue => e
@@ -3481,9 +3613,16 @@ module DeveloperMenu
 
     def set_pokemon_hatch_steps!(pkmn, steps)
       return false unless pkmn
-      return false unless pkmn.respond_to?(:egg_steps=)
-      pkmn.egg_steps = steps
-      true
+      steps_val = steps.to_i
+      if pkmn.respond_to?(:egg_steps=)
+        pkmn.egg_steps = steps_val
+        return true
+      elsif pkmn.respond_to?(:eggsteps=)
+        pkmn.egg_steps = steps_val rescue nil
+        pkmn.eggsteps = steps_val if pkmn.respond_to?(:eggsteps=)
+        return true
+      end
+      false
     rescue => e
       log_error("Set Egg Steps", e)
       false
@@ -3535,6 +3674,182 @@ module DeveloperMenu
 
     def faint_pokemon!(pkmn)
       set_pokemon_hp!(pkmn, 0)
+    end
+
+    def pokemon_gmax_factor?(pkmn)
+      return false unless pkmn
+      return !!pkmn.gmax_factor if pkmn.respond_to?(:gmax_factor)
+      return !!pkmn.hasGmaxFactor? if pkmn.respond_to?(:hasGmaxFactor?)
+      return !!pkmn.can_gigantamax? if pkmn.respond_to?(:can_gigantamax?)
+      false
+    rescue StandardError
+      false
+    end
+
+    def set_pokemon_gmax_factor!(pkmn, flag)
+      return false unless pkmn
+      if pkmn.respond_to?(:gmax_factor=)
+        pkmn.gmax_factor = !!flag
+        return true
+      elsif flag && pkmn.respond_to?(:giveGmaxFactor)
+        pkmn.giveGmaxFactor
+        return true
+      elsif !flag && pkmn.respond_to?(:removeGmaxFactor)
+        pkmn.removeGmaxFactor
+        return true
+      end
+      false
+    rescue StandardError => e
+      log_error("Set GMax Factor", e)
+      false
+    end
+
+    def pokemon_tera_type(pkmn)
+      return nil unless pkmn
+      return pkmn.tera_type if pkmn.respond_to?(:tera_type)
+      nil
+    rescue StandardError
+      nil
+    end
+
+    def set_pokemon_tera_type!(pkmn, type_sym)
+      return false unless pkmn
+      if pkmn.respond_to?(:tera_type=)
+        pkmn.tera_type = type_sym
+        return true
+      elsif pkmn.respond_to?(:forced_tera_type=)
+        pkmn.forced_tera_type = type_sym
+        return true
+      end
+      false
+    rescue StandardError => e
+      log_error("Set Tera Type", e)
+      false
+    end
+
+    def pokemon_shadow?(pkmn)
+      return false unless pkmn
+      return pkmn.shadowPokemon? if pkmn.respond_to?(:shadowPokemon?)
+      return !!pkmn.shadow if pkmn.respond_to?(:shadow)
+      false
+    rescue StandardError
+      false
+    end
+
+    def set_pokemon_shadow!(pkmn, flag)
+      return false unless pkmn
+      if flag
+        if pkmn.respond_to?(:makeShadow)
+          pkmn.makeShadow
+          return true
+        elsif pkmn.respond_to?(:shadow=)
+          pkmn.shadow = true
+          pkmn.heartgauge = 10000 if pkmn.respond_to?(:heartgauge=)
+          return true
+        end
+      else
+        if pkmn.respond_to?(:makeNotShadow)
+          pkmn.makeNotShadow
+          return true
+        elsif pkmn.respond_to?(:purify)
+          pkmn.purify
+          return true
+        elsif pkmn.respond_to?(:shadow=)
+          pkmn.shadow = false
+          pkmn.heartgauge = 0 if pkmn.respond_to?(:heartgauge=)
+          return true
+        end
+      end
+      false
+    rescue StandardError => e
+      log_error("Set Shadow State", e)
+      false
+    end
+
+    def pokemon_heart_gauge(pkmn)
+      return nil unless pkmn
+      return pkmn.heartgauge if pkmn.respond_to?(:heartgauge)
+      return pkmn.heart_gauge if pkmn.respond_to?(:heart_gauge)
+      nil
+    rescue StandardError
+      nil
+    end
+
+    def set_pokemon_heart_gauge!(pkmn, value)
+      return false unless pkmn
+      val = value.to_i
+      val = 0 if val < 0
+      if pkmn.respond_to?(:heartgauge=)
+        pkmn.heartgauge = val
+        return true
+      elsif pkmn.respond_to?(:heart_gauge=)
+        pkmn.heart_gauge = val
+        return true
+      end
+      false
+    rescue StandardError => e
+      log_error("Set Heart Gauge", e)
+      false
+    end
+
+    def pokemon_fateful_encounter?(pkmn)
+      return false unless pkmn
+      return !!pkmn.fateful_encounter if pkmn.respond_to?(:fateful_encounter)
+      return pkmn.obtain_method == 4 if pkmn.respond_to?(:obtain_method)
+      false
+    rescue StandardError
+      false
+    end
+
+    def set_pokemon_fateful_encounter!(pkmn, flag)
+      return false unless pkmn
+      if pkmn.respond_to?(:fateful_encounter=)
+        pkmn.fateful_encounter = !!flag
+        return true
+      elsif pkmn.respond_to?(:obtain_method=)
+        pkmn.obtain_method = flag ? 4 : 0
+        return true
+      end
+      false
+    rescue StandardError => e
+      log_error("Set Fateful Encounter", e)
+      false
+    end
+
+    def make_pokemon_obedient!(pkmn)
+      return false unless pkmn
+      p = get_player
+      if p
+        p_name = p.respond_to?(:name) ? p.name : "Trainer"
+        p_id = p.respond_to?(:id) ? p.id : 0
+        if pkmn.respond_to?(:owner) && pkmn.owner
+          pkmn.owner.name = p_name if pkmn.owner.respond_to?(:name=)
+          pkmn.owner.id = p_id if pkmn.owner.respond_to?(:id=)
+        end
+        pkmn.ot = p_name if pkmn.respond_to?(:ot=)
+        pkmn.trainerID = p_id if pkmn.respond_to?(:trainerID=)
+        pkmn.personalID = rand(256) | (rand(256) << 8) | (rand(256) << 16) | (rand(256) << 24) if pkmn.respond_to?(:personalID) && pkmn.personalID.nil?
+      end
+      pkmn.obtain_mode = 0 if pkmn.respond_to?(:obtain_mode=)
+      pkmn.obtain_text = "" if pkmn.respond_to?(:obtain_text=)
+      true
+    rescue StandardError => e
+      log_error("Make Pokemon Obedient", e)
+      false
+    end
+
+    def set_pokemon_ability_slot!(pkmn, slot_index)
+      return false unless pkmn
+      idx = slot_index.to_i
+      if pkmn.respond_to?(:ability_index=)
+        pkmn.ability_index = idx
+        pkmn.reset_moves if pkmn.respond_to?(:reset_moves)
+        return true
+      end
+      false
+    rescue StandardError => e
+      log_error("Set Ability Slot", e)
+      false
     end
   end
 end
@@ -3707,10 +4022,14 @@ module DeveloperMenu
 
     def reset_pokemon_moves!(pkmn)
       return false unless pkmn
-      if pkmn.respond_to?(:resetMoves)
-        pkmn.resetMoves
-      elsif pkmn.respond_to?(:reset_moves)
+      if respond_to?(:engine_adapter_for)
+        adapter_result = engine_adapter_for(:moves).reset_moves(pkmn)
+        return adapter_result[1] if adapter_result && adapter_result[0]
+      end
+      if pkmn.respond_to?(:reset_moves)
         pkmn.reset_moves
+      elsif pkmn.respond_to?(:resetMoves)
+        pkmn.resetMoves
       elsif pkmn.respond_to?(:pbLearnMove) && pkmn.respond_to?(:species) && pkmn.respond_to?(:level)
         moved = false
         level_up_moves_for(pkmn).each do |entry|
@@ -3728,7 +4047,12 @@ module DeveloperMenu
     end
 
     def record_pokemon_initial_moves!(pkmn)
-      return false unless pkmn && pkmn.respond_to?(:moves)
+      return false unless pkmn
+      if pkmn.respond_to?(:record_first_moves)
+        pkmn.record_first_moves
+        return true
+      end
+      return false unless pkmn.respond_to?(:moves)
       move_ids = pkmn.moves.compact.map { |move| move_identifier(move) }.compact
       return false if move_ids.empty?
       if pkmn.respond_to?(:first_moves=)
@@ -3938,15 +4262,35 @@ module DeveloperMenu
 
     def restore_pokemon_pp!(pkmn)
       return false unless pkmn
-      sync_pokemon_custom_pp_limits!(pkmn)
-      changed = false
-      each_move_slot(pkmn) do |move, _index|
-        next unless move
-        total_pp = pokemon_move_total_pp_value(move)
-        next if total_pp.nil?
-        changed = set_pokemon_move_pp!(move, total_pp) || changed
+      restored = false
+      if respond_to?(:engine_adapter_for)
+        adapter_result = engine_adapter_for(:moves).restore_pp(pkmn)
+        restored = !!adapter_result[1] if adapter_result && adapter_result[0]
       end
-      changed
+      unless restored
+        if pkmn.respond_to?(:heal_PP)
+          pkmn.heal_PP
+          restored = true
+        elsif pkmn.respond_to?(:healPP)
+          pkmn.healPP
+          restored = true
+        end
+      end
+      unless restored
+        sync_pokemon_custom_pp_limits!(pkmn) if respond_to?(:sync_pokemon_custom_pp_limits!)
+        changed = false
+        each_move_slot(pkmn) do |move, _index|
+          next unless move
+          total_pp = pokemon_move_total_pp_value(move)
+          next if total_pp.nil?
+          changed = set_pokemon_move_pp!(move, total_pp) || changed
+        end
+        restored = changed || true
+      end
+      if respond_to?(:apply_custom_pp_limits_to_pokemon!)
+        apply_custom_pp_limits_to_pokemon!(pkmn, true)
+      end
+      true
     rescue => e
       log_error("Restore Pokemon PP", e)
       false
@@ -4898,76 +5242,6 @@ module DeveloperMenu
       end
     end
 
-    def forget_move!(pkmn, index)
-      return false unless pkmn && pkmn.respond_to?(:moves) && pkmn.moves
-      return false if index.nil? || index < 0
-      if pkmn.moves.respond_to?(:delete_at)
-        !!pkmn.moves.delete_at(index)
-      elsif pkmn.moves.respond_to?(:DeleteAt)
-        !!pkmn.moves.DeleteAt(index)
-      else
-        false
-      end
-    rescue => e
-      log_error("Forget Move", e)
-      false
-    end
-
-    def reset_pokemon_moves!(pkmn)
-      return false unless pkmn
-      if respond_to?(:engine_adapter_for)
-        adapter_result = engine_adapter_for(:moves).reset_moves(pkmn)
-        return adapter_result[1] if adapter_result && adapter_result[0]
-      end
-      pkmn.reset_moves if pkmn.respond_to?(:reset_moves)
-      pkmn.resetMoves if pkmn.respond_to?(:resetMoves)
-      true
-    rescue => e
-      log_error("Reset Moveset", e)
-      false
-    end
-
-    def record_pokemon_initial_moves!(pkmn)
-      return false unless pkmn
-      pkmn.record_first_moves if pkmn.respond_to?(:record_first_moves)
-      true
-    rescue => e
-      log_error("Record Initial Moves", e)
-      false
-    end
-
-    def restore_pokemon_pp!(pkmn)
-      return false unless pkmn
-      restored = false
-      if respond_to?(:engine_adapter_for)
-        adapter_result = engine_adapter_for(:moves).restore_pp(pkmn)
-        restored = !!adapter_result[1] if adapter_result && adapter_result[0]
-      end
-      unless restored
-        pkmn.heal_PP if pkmn.respond_to?(:heal_PP)
-        pkmn.healPP if pkmn.respond_to?(:healPP)
-      end
-      # Engine healing normally rebuilds PP from the move database. Reapply
-      # PokeDebug's persistent per-move limits after either adapter path.
-      if respond_to?(:apply_custom_pp_limits_to_pokemon!)
-        apply_custom_pp_limits_to_pokemon!(pkmn, true)
-      end
-      true
-    rescue => e
-      log_error("Restore PP", e)
-      false
-    end
-
-    def max_pokemon_ppups!(pkmn, value = 3)
-      return false unless pkmn
-      each_move_slot(pkmn) do |move, _index|
-        move.ppup = value if move && move.respond_to?(:ppup=)
-      end
-      true
-    rescue => e
-      log_error("Max PP Ups", e)
-      false
-    end
 
     def duplicate_pokemon(pkmn)
       clone = try_call("Duplicate Pokemon Clone") { pkmn.clone }
@@ -5158,10 +5432,27 @@ module DeveloperMenu
         move_object = adapter_result[1] if adapter_result && adapter_result[0]
       end
       if defined?(PBMove)
-        move_object ||= try_call("Create Legacy Move") { PBMove.new(move_symbol) }
+        move_object ||= try_call("Create Legacy Move Symbol") { PBMove.new(move_symbol) }
+        if !move_object && defined?(PBMoves)
+          num_id = get_symbol(:Move, move_symbol) rescue nil
+          num_id ||= (PBMoves.const_get(move_symbol) rescue nil) if move_symbol.is_a?(Symbol)
+          move_object ||= try_call("Create Legacy Move Int") { PBMove.new(num_id) } if num_id
+        end
       end
       if !move_object && defined?(Pokemon) && safe_const_get(Pokemon, :Move)
         move_object = try_call("Create Modern Move") { Pokemon::Move.new(move_symbol) }
+      end
+      if !move_object && defined?(Battle) && safe_const_get(Battle, :Move)
+        move_object = try_call("Create Battle Move") { Battle::Move.new(move_symbol) }
+      end
+      if !move_object && defined?(Move)
+        move_object = try_call("Create Generic Move") { Move.new(move_symbol) }
+      end
+      if !move_object && pkmn.respond_to?(:pbLearnMove)
+        return true if pkmn.pbLearnMove(move_symbol)
+      end
+      if !move_object && pkmn.respond_to?(:learn_move)
+        return true if pkmn.learn_move(move_symbol)
       end
       return false unless move_object
 
@@ -5266,9 +5557,24 @@ module DeveloperMenu
       pkmn.ball_used = sym if pkmn.respond_to?(:ball_used=)
     end
 
+    def item_is_poke_ball?(item)
+      return false if item.nil?
+      return item.is_poke_ball? if item.respond_to?(:is_poke_ball?)
+      if defined?(GameData) && safe_const_get(GameData, :Item)
+        record = GameData::Item.try_get(item) rescue nil
+        return record.is_poke_ball? if record && record.respond_to?(:is_poke_ball?)
+      end
+      return pbIsPokeBall?(item) if defined?(pbIsPokeBall?)
+      name = item_display_name(item).to_s.downcase
+      return true if name.include?("ball") && !name.include?("balloon") && !name.include?("iron ball") && !name.include?("light ball") && !name.include?("smoke ball")
+      false
+    rescue => e
+      false
+    end
+
     def choose_poke_ball_id
       hash = build_search_hash(:Item) do |item|
-        item.is_poke_ball? rescue false
+        item_is_poke_ball?(item)
       end
       hash = build_search_hash(:Item) if hash.empty?
       search_list("Poke Balls", hash)
@@ -5440,6 +5746,7 @@ module DeveloperMenu
       return unless allow_map_runtime_update?
       ensure_runtime_patches!
       ensure_custom_pp_limit_persistence! if respond_to?(:ensure_custom_pp_limit_persistence!)
+      ensure_pokemon_form_overrides_persistence! if respond_to?(:ensure_pokemon_form_overrides_persistence!)
       if respond_to?(:ensure_pokedebug_device!)
         current_f = defined?(Graphics) && Graphics.respond_to?(:frame_count) ? Graphics.frame_count.to_i : 0
         if !@pokedebug_device_in_bag_confirmed || (current_f % 60) == 0
@@ -5827,8 +6134,15 @@ module DeveloperMenu
         end
         # RGSS1 can load files packed inside .rgssad even though File.file?
         # correctly reports false for their virtual archive paths.
-        if !result && defined?(RUBY_VERSION) && RUBY_VERSION.to_s.index("1.8") == 0
-          result = safe_load_data("Data/MapInfos.rxdata")
+        if !result
+          ["Data/MapInfos.rxdata", "Data/MapInfos.rvdata2", "Data/MapInfos.rvdata"].each do |vpath|
+            begin
+              result = safe_load_data(vpath)
+              break if result
+            rescue StandardError
+              nil
+            end
+          end
         end
         result
       end
@@ -6984,7 +7298,7 @@ module DeveloperMenu
       upper_name = symbol_name.to_s.upcase
       return Input.const_get(upper_name) if Input.const_defined?(upper_name)
       symbol_name
-    rescue
+    rescue StandardError
       nil
     end
 
@@ -6999,7 +7313,7 @@ module DeveloperMenu
       end
       return true if !value.nil? && Input.press?(value)
       native_key_pressed?(constant_name || symbol_name)
-    rescue
+    rescue StandardError
       false
     end
 
@@ -7024,16 +7338,28 @@ module DeveloperMenu
       buttons = combo[:buttons] || []
       return false if buttons.empty?
       all_input_pressing?(*buttons)
-    rescue
+    rescue StandardError
       false
     end
 
     def mobile_combo_label(combo)
       combo[:label] || (combo[:buttons] || []).map { |button| button.to_s.upcase }.join(" + ")
-    rescue
+    rescue StandardError
       "UNKNOWN"
     end
 
+    def required_combo_hold_frames(base_frames)
+      rate = 40
+      begin
+        rate = Graphics.frame_rate if defined?(Graphics) && Graphics.respond_to?(:frame_rate) && Graphics.frame_rate
+      rescue
+        rate = 40
+      end
+      rate = 40 if rate.to_i <= 0
+      [(base_frames.to_i * rate.to_f / 40.0).round, base_frames.to_i].max
+    rescue
+      base_frames.to_i
+    end
     def joiplay_combo_triggered?
       return false unless defined?(Input)
       @mobile_combo_hold_counters ||= {}
@@ -7044,7 +7370,7 @@ module DeveloperMenu
         label = mobile_combo_label(combo)
         if mobile_combo_pressed?(combo)
           @mobile_combo_hold_counters[label] = @mobile_combo_hold_counters.fetch(label, 0).to_i + 1
-          next unless @mobile_combo_hold_counters[label] >= combo[:hold].to_i
+          next unless @mobile_combo_hold_counters[label] >= required_combo_hold_frames(combo[:hold])
           @last_mobile_combo_label = label
           triggered = true
           break
@@ -7260,7 +7586,13 @@ module DeveloperMenu
              (!battle_scene_active? || battle_wtw_hotkey_enabled?)
             toggle_wtw
           end
-          if trigger_hotkey?(hotkey_symbol_for(:heal_party), hotkey_input_constant_for(:heal_party)) &&
+          if trigger_hotkey?(hotkey_symbol_for(:fast_forward), hotkey_input_constant_for(:fast_forward))
+            toggle_fast_forward!
+          end
+          if trigger_hotkey?(hotkey_symbol_for(:fast_forward), hotkey_input_constant_for(:fast_forward))
+          toggle_fast_forward!
+        end
+        if trigger_hotkey?(hotkey_symbol_for(:heal_party), hotkey_input_constant_for(:heal_party)) &&
              (!battle_scene_active? || battle_heal_hotkey_enabled?)
             heal_party
           end
@@ -7473,9 +7805,25 @@ module DeveloperMenu
   class << self
     def player_badge_count
       p = get_player
-      return 0 unless p && p.respond_to?(:badges) && p.badges
-      p.badges.select { |badge| badge }.length
-    rescue
+      return 0 unless p
+      return p.badge_count if p.respond_to?(:badge_count)
+      if p.respond_to?(:badges) && p.badges
+        b = p.badges
+        return b.values.select { |v| v }.length if b.is_a?(Hash)
+        return b.select { |badge| badge }.length if b.is_a?(Array)
+        if b.is_a?(Integer)
+          cnt = 0
+          val = b
+          while val > 0
+            cnt += 1 if (val & 1) == 1
+            val >>= 1
+          end
+          return cnt
+        end
+      end
+      return $Trainer.badges.select { |badge| badge }.length if defined?($Trainer) && $Trainer.respond_to?(:badges) && $Trainer.badges.is_a?(Array)
+      0
+    rescue StandardError
       0
     end
 
@@ -7606,6 +7954,16 @@ module DeveloperMenu
       lines << _INTL("OT: {1}", pokemon_ot_name(pkmn))
       lines << _INTL("Nature: {1}", pkmn.nature) if pkmn.respond_to?(:nature) && pkmn.nature
       lines << _INTL("Form: {1}", pokemon_form_value(pkmn)) if pokemon_form_value(pkmn).to_i > 0
+      override_v = pokemon_form_override_value(pkmn) if respond_to?(:pokemon_form_override_value)
+      lines << _INTL("Form Override: {1} (Locked)", override_v) if !override_v.nil?
+        tera = pokemon_tera_type(pkmn) if respond_to?(:pokemon_tera_type)
+        lines << _INTL("Tera Type: {1}", tera) if tera
+        lines << _INTL("Gigantamax: YES") if respond_to?(:pokemon_gmax_factor?) && pokemon_gmax_factor?(pkmn)
+        if respond_to?(:pokemon_shadow?) && pokemon_shadow?(pkmn)
+          heart = pokemon_heart_gauge(pkmn) if respond_to?(:pokemon_heart_gauge)
+          lines << _INTL("Shadow: YES (Heart: {1})", heart || 0)
+        end
+        lines << _INTL("Fateful Encounter: YES") if respond_to?(:pokemon_fateful_encounter?) && pokemon_fateful_encounter?(pkmn)
       lines << _INTL("Shiny: {1}", pokemon_shiny_state(pkmn) ? "YES" : "NO")
       lines << _INTL("Egg: {1}", pokemon_egg_state(pkmn) ? "YES" : "NO")
       lines
@@ -7791,6 +8149,7 @@ module DeveloperMenu
       profile[:native_pokemon_editor_available] = native_pokemon_editor_available?
       profile[:native_pokemon_editor_safe] = profile[:native_pokemon_editor_available] && native_pokemon_editor_safe_slug?(slug)
       profile[:preferred_pokemon_editor] = preferred_pokemon_editor_name(slug, profile[:native_pokemon_editor_available])
+      profile[:ruby_engine] = defined?(RUBY_ENGINE) ? RUBY_ENGINE.to_s : (defined?(TRUBY) ? "TRuby" : "mri")
       profile[:known_notes] = notes
       profile
     rescue => e
@@ -8832,7 +9191,7 @@ module DeveloperMenu
 
     def write_quick_actions_config!
       begin
-        lines = quick_actions.map(&:to_s)
+        lines = quick_actions.map { |a| a.to_s }
         File.open(quick_actions_config_path, "w") { |f| f.puts(lines.join("\n")) }
         true
       rescue => e
@@ -8845,9 +9204,9 @@ module DeveloperMenu
       @quick_actions = [:heal_party, :engine_report, :native_debug, :none]
       return @quick_actions unless File.file?(quick_actions_config_path)
       begin
-        lines = File.readlines(quick_actions_config_path).map(&:strip).reject { |l| l.empty? }
+        lines = File.readlines(quick_actions_config_path).map { |line| line.strip }.reject { |l| l.empty? }
         if lines.length == 4
-          @quick_actions = lines.map(&:to_sym)
+          @quick_actions = lines.map { |line| line.to_sym }
         end
       rescue => e
         log_error("Load Quick Actions Config", e)
@@ -9033,6 +9392,24 @@ module DeveloperMenu
 
     def menu_extras
       render_dynamic_menu(t(TR[:extras]).upcase, extras_menu_entries)
+    end
+
+    def check_pokedebug_updates
+      lines = []
+      lines << _INTL("PokeDebug Version: {1}", developer_menu_version)
+      lines << _INTL("Build Signature: Universal 2026 Edition")
+      lines << _INTL("Ruby Engine: {1} (v{2})", (defined?(RUBY_ENGINE) ? RUBY_ENGINE : "mri"), RUBY_VERSION)
+      lines << _INTL("Game Title: {1}", current_game_title)
+      lines << ""
+      lines << _INTL("GitHub: https://github.com/Erdeem/pokedebug")
+      lines << _INTL("Auto-Update status:")
+      lines << _INTL("To update PokeDebug, simply run PokeDebug_Installer.cmd")
+      lines << _INTL("in your game folder and select 'Update / Reinstall'.")
+      lines << _INTL("Your custom hotkeys and settings will be preserved.")
+      Kernel.pbMessage(_INTL("{1}", lines.join("\n")))
+    rescue StandardError => e
+      log_error("Check Updates", e)
+      Kernel.pbMessage(engine_failure_message("check updates"))
     end
   end
 end
@@ -11429,13 +11806,32 @@ module DeveloperMenu
         battle_menu_entry(:engine_reset_trainers, t(TR[:reset_map_trainers])) { engine_reset_trainers },
         battle_menu_entry(:engine_exp_all, t(TR[:expall])) { engine_exp_all },
         battle_menu_entry(:engine_battle_logging, t(TR[:battle_logging])) { engine_battle_logging },
-        battle_menu_entry(:engine_wtw, t(TR[:wtw])) { toggle_wtw }
+        battle_menu_entry(:engine_weather, t(TR[:weather_title])) { engine_weather },
+        battle_menu_entry(:engine_time, t(TR[:time_title])) { engine_time },
+        battle_menu_entry(:engine_force_save, t(TR[:force_save])) { engine_force_save },
+        battle_menu_entry(:engine_unstuck, t(TR[:unstuck_player])) { engine_unstuck },
+        battle_menu_entry(:engine_wtw, t(TR[:wtw])) { toggle_wtw },
+        battle_menu_entry(:engine_fast_forward, t(TR[:fast_forward]) + ": " + (respond_to?(:current_fast_forward_label) ? current_fast_forward_label : "1.0x")) { engine_fast_forward_select }
       ])
       menu << battle_menu_entry(:engine_open_pc, t(TR[:openpc])) { open_pc_menu } if open_pc_available?
       profile = cached_engine_profile
       render_dynamic_menu(_INTL("{1} | {2}", t(TR[:engine]).upcase, profile[:engine_family] || (profile[:modern_engine] ? "Modern/Hybrid" : "Legacy")), menu)
     end
 
+    def engine_fast_forward_select
+      stages = FAST_FORWARD_STAGES rescue [1.0, 1.5, 2.0, 3.0]
+      cmds = stages.map do |s|
+        tag = (s == current_fast_forward_multiplier) ? "[*] " : "[ ] "
+        tag + (s <= 1.0 ? "1.0x (Normal)" : sprintf("%.1fx Speed", s))
+      end
+      cmds.push(t(TR[:back]))
+      choice = Kernel.pbMessage(_INTL("Choose Fast Forward Speed:"), cmds, -1)
+      return if choice < 0 || choice >= stages.length
+      set_fast_forward_stage!(choice)
+      Kernel.pbMessage(_INTL("Game speed set to {1}.", current_fast_forward_label))
+    rescue StandardError => e
+      log_error("Engine Fast Forward Select", e)
+    end
     def engine_warp
       mapinfos = get_map_infos
       return Kernel.pbMessage(_INTL("MapInfos.rxdata not found!")) unless mapinfos
@@ -11493,6 +11889,140 @@ module DeveloperMenu
       else
         Kernel.pbMessage(engine_failure_message("warp"))
       end
+    end
+
+    def engine_weather
+      weather_options = [
+        ["Clear / Nenhum", :None, 0],
+        ["Chuva / Rain", :Rain, 1],
+        ["Tempestade / Storm", :Storm, 2],
+        ["Neve / Snow", :Snow, 3],
+        ["Nevasca / Blizzard", :Blizzard, 3],
+        ["Tempestade de Areia / Sandstorm", :Sandstorm, 0],
+        ["Sol Forte / Sun", :Sun, 0],
+        ["Nevoeiro / Fog", :Fog, 0],
+        ["Chuva Forte / Heavy Rain", :HeavyRain, 1]
+      ]
+      cmds = weather_options.map { |opt| opt[0] }
+      cmds.push(t(TR[:back]))
+      cmd = Kernel.pbMessage(_INTL("Select Overworld Weather:"), cmds, -1)
+      return if cmd < 0 || cmd >= weather_options.length
+      selected = weather_options[cmd]
+      label = selected[0]
+      sym = selected[1]
+      num = selected[2]
+      applied = false
+      if defined?(pbSetWeather)
+        begin
+          pbSetWeather(sym, 9999)
+          applied = true
+        rescue StandardError => e
+          log_error("pbSetWeather", e)
+        end
+      end
+      if !applied && $game_screen && $game_screen.respond_to?(:weather)
+        begin
+          $game_screen.weather(num, 9, 20)
+          applied = true
+        rescue StandardError => e
+          log_error("game_screen.weather", e)
+        end
+      end
+      if applied
+        $game_map.need_refresh = true if $game_map && $game_map.respond_to?(:need_refresh=)
+        Kernel.pbMessage(_INTL("Overworld weather set to {1}.", label))
+      else
+        Kernel.pbMessage(engine_failure_message("set weather"))
+      end
+    rescue StandardError => e
+      log_error("Engine Weather", e)
+      Kernel.pbMessage(engine_failure_message("change weather"))
+    end
+
+    def engine_time
+      time_options = [
+        ["Dia (Day)", Tone.new(0, 0, 0, 0)],
+        ["Noite (Night)", Tone.new(-100, -100, -20, 0)],
+        ["Entardecer (Dusk)", Tone.new(10, -40, -50, 0)],
+        ["Amanhecer (Dawn)", Tone.new(-30, -30, 10, 0)],
+        ["Restaurar Padrao (Real Clock)", nil]
+      ]
+      cmds = time_options.map { |opt| opt[0] }
+      cmds.push(t(TR[:back]))
+      cmd = Kernel.pbMessage(_INTL("Select Lighting / Time Tone:"), cmds, -1)
+      return if cmd < 0 || cmd >= time_options.length
+      selected_tone = time_options[cmd][1]
+      if selected_tone.nil?
+        if defined?(PBDayNight) && PBDayNight.respond_to?(:getTone)
+          tone = PBDayNight.getTone rescue Tone.new(0, 0, 0, 0)
+          $game_screen.start_tone_change(tone, 20) if $game_screen && $game_screen.respond_to?(:start_tone_change)
+        elsif $game_screen && $game_screen.respond_to?(:start_tone_change)
+          $game_screen.start_tone_change(Tone.new(0, 0, 0, 0), 20)
+        end
+        Kernel.pbMessage(_INTL("Lighting tone restored to default clock."))
+      else
+        if $game_screen && $game_screen.respond_to?(:start_tone_change)
+          $game_screen.start_tone_change(selected_tone, 20)
+          Kernel.pbMessage(_INTL("Lighting tone set to {1}.", time_options[cmd][0]))
+        else
+          Kernel.pbMessage(engine_failure_message("change lighting tone"))
+        end
+      end
+    rescue StandardError => e
+      log_error("Engine Time", e)
+      Kernel.pbMessage(engine_failure_message("change time/lighting"))
+    end
+
+    def engine_force_save
+      old_disabled = false
+      if $game_system && $game_system.respond_to?(:save_disabled)
+        old_disabled = $game_system.save_disabled
+        $game_system.save_disabled = false
+      end
+      saved = false
+      if defined?(pbSaveScreen)
+        saved = pbSaveScreen rescue false
+      elsif defined?(SaveData) && SaveData.respond_to?(:save_to_file)
+        saved = (SaveData.save_to_file rescue false)
+      elsif defined?(pbEmergencySave)
+        saved = (pbEmergencySave rescue false)
+      elsif defined?(Scene_Save)
+        $scene = Scene_Save.new rescue nil
+        saved = true
+      elsif defined?(Game) && Game.respond_to?(:save)
+        saved = (Game.save rescue false)
+      end
+      if saved
+        Kernel.pbMessage(_INTL("Game saved successfully!"))
+      else
+        if old_disabled && $game_system && $game_system.respond_to?(:save_disabled=)
+          $game_system.save_disabled = old_disabled
+        end
+        Kernel.pbMessage(engine_failure_message("save game"))
+      end
+    rescue StandardError => e
+      log_error("Engine Force Save", e)
+      Kernel.pbMessage(engine_failure_message("emergency save"))
+    end
+
+    def engine_unstuck
+      if $game_player
+        $game_player.through = true if $game_player.respond_to?(:through=)
+        $game_player.unlock if $game_player.respond_to?(:unlock)
+        $game_player.straighten if $game_player.respond_to?(:straighten)
+        $game_player.clear_move_route if $game_player.respond_to?(:clear_move_route)
+      end
+      if $game_system
+        if $game_system.respond_to?(:map_interpreter) && $game_system.map_interpreter
+          $game_system.map_interpreter.clear if $game_system.map_interpreter.respond_to?(:clear)
+        end
+        $game_system.menu_disabled = false if $game_system.respond_to?(:menu_disabled=)
+      end
+      $game_temp.common_event_id = 0 if defined?($game_temp) && $game_temp && $game_temp.respond_to?(:common_event_id=)
+      Kernel.pbMessage(_INTL("Player unstuck! Collisions passed and locks cleared."))
+    rescue StandardError => e
+      log_error("Engine Unstuck", e)
+      Kernel.pbMessage(engine_failure_message("unstuck player"))
     end
   end
 end
@@ -11693,6 +12223,43 @@ end
       Kernel.pbMessage(_INTL("You aren't in the Safari Zone or a Bug-Catching Contest!"))
     end
 
+    def active_battle_field_effect_id
+      return $fMan.currentField if defined?($fMan) && $fMan && $fMan.respond_to?(:currentField)
+      return $fMan.field if defined?($fMan) && $fMan && $fMan.respond_to?(:field)
+      return $game_screen.field if defined?($game_screen) && $game_screen && $game_screen.respond_to?(:field)
+      battle = current_battle_object if respond_to?(:current_battle_object)
+      return battle.field.effect if battle && battle.respond_to?(:field) && battle.field && battle.field.respond_to?(:effect)
+      0
+    rescue StandardError
+      0
+    end
+
+    def set_battle_field_effect_id!(field_id)
+      val = field_id.to_i
+      set_any = false
+      if defined?($fMan) && $fMan
+        if $fMan.respond_to?(:currentField=)
+          $fMan.currentField = val
+          set_any = true
+        elsif $fMan.respond_to?(:field=)
+          $fMan.field = val
+          set_any = true
+        end
+      end
+      if defined?($game_screen) && $game_screen && $game_screen.respond_to?(:field=)
+        $game_screen.field = val
+        set_any = true
+      end
+      battle = current_battle_object if respond_to?(:current_battle_object)
+      if battle && battle.respond_to?(:field) && battle.field && battle.field.respond_to?(:effect=)
+        battle.field.effect = val
+        set_any = true
+      end
+      set_any
+    rescue => e
+      log_error("Set Battle Field Effect", e)
+      false
+    end
     def engine_field_effects
       cmd = 0
       loop do
@@ -11708,6 +12275,8 @@ end
         cmds.push((higher_rate ? "[Y]" : "[  ]") + " " + _INTL("Higher encounter rate"))
         cmds.push((lower_level ? "[Y]" : "[  ]") + " " + _INTL("Lower level wild Pokemon"))
         cmds.push((higher_level ? "[Y]" : "[  ]") + " " + _INTL("Higher level wild Pokemon"))
+        has_custom_field = (defined?($fMan) && $fMan) || (defined?($game_screen) && $game_screen && $game_screen.respond_to?(:field)) || defined?(FieldEffects)
+        cmds.push(_INTL("Battle Field: {1}", active_battle_field_effect_id)) if has_custom_field
         cmds.push(t(TR[:back]))
         cmd = pbShowCommands(nil, cmds, -1, cmd)
         break if cmd < 0 || cmd == cmds.length - 1
@@ -11718,7 +12287,7 @@ end
           current = get_repel_steps || 0
           params.setDefaultValue(current) if params.respond_to?(:setDefaultValue)
           params.setInitialValue(current) if params.respond_to?(:setInitialValue)
-          set_repel_steps(pbMessageChooseNumber(_INTL("Set the Pokemon's level."), params))
+          set_repel_steps(pbMessageChooseNumber(_INTL("Set the number of repel steps."), params))
         when 1
           set_strength_enabled!(!strength_enabled?)
         when 2
@@ -11739,6 +12308,14 @@ end
         when 6
           current = get_map_toggle(:higher_level_wild_pokemon)
           set_map_toggle(!current, :higher_level_wild_pokemon)
+        when 7
+          params = ChooseNumberParams.new
+          params.setRange(0, 37)
+          current_f = active_battle_field_effect_id
+          params.setDefaultValue(current_f) if params.respond_to?(:setDefaultValue)
+          params.setInitialValue(current_f) if params.respond_to?(:setInitialValue)
+          new_field = pbMessageChooseNumber(_INTL("Choose Battle Field Effect ID (0-37):"), params)
+          set_battle_field_effect_id!(new_field)
         end
       end
     end
@@ -12332,6 +12909,7 @@ module DeveloperMenu
         battle_menu_entry(:pokemon_expand_boxes, t(TR[:addboxes])) { pokemon_expand_boxes },
         battle_menu_entry(:pokemon_quick_hatch, t(TR[:quickhatch])) { pokemon_quick_hatch },
         battle_menu_entry(:pokemon_add, t(TR[:addpkmn])) { pokemon_add },
+        battle_menu_entry(:pokemon_add_fusion, t(TR[:add_fusion])) { pokemon_add_fusion },
         battle_menu_entry(:pokemon_import_preset, t(TR[:import_preset])) { pokemon_import_preset },
         battle_menu_entry(:pokemon_heal_party, t(TR[:Heal])) { heal_party },
         battle_menu_entry(:pokemon_export_ids, t(TR[:exportids])) { dump_ids(:Species, "Pokemon_ID_List.txt") }
@@ -12415,6 +12993,11 @@ module DeveloperMenu
       failed = 0
       completed = true
       species_entries = storage_species_form_entries
+        if species_entries.length > 1500
+          if Kernel.pbConfirmMessage(_INTL("High species count detected ({1}). Limit to first 1000 base species to protect game memory?", species_entries.length))
+            species_entries = species_entries.slice(0, 1000)
+          end
+        end
       stored_forms = {}
       free_slots = []
       each_storage_index do |box, slot|
@@ -12635,6 +13218,29 @@ end
       end
     end
 
+    def pokemon_add_fusion
+      hash = build_search_hash(:Species)
+      return Kernel.pbMessage(_INTL("Species data not available.")) if hash.empty?
+      head_id = search_list("Head Species (Fusion)", hash)
+      return unless head_id && head_id.to_i > 0
+      body_id = search_list("Body Species (Fusion)", hash)
+      return unless body_id && body_id.to_i > 0
+      fusion_id = head_id.to_i + (body_id.to_i * 500)
+      level = choose_debug_level(_INTL("Set the Fusion Pokemon's level."), 5)
+      return if level <= 0
+      pkmn = create_pkmn(fusion_id, level)
+      return Kernel.pbMessage(engine_failure_message("create Fusion Pokemon ##{fusion_id}")) unless pkmn
+      recalc_pokemon_stats(pkmn)
+      if add_pkmn_silently(pkmn)
+        sp_name = pokemon_species_name(pkmn)
+        Kernel.pbMessage(_INTL("Added Fusion {1} (ID #{2}) to party/storage.", sp_name, fusion_id))
+      else
+        Kernel.pbMessage(_INTL("Couldn't add Fusion Pokemon because party and storage are full."))
+      end
+    rescue => e
+      log_error("Add Fusion Pokemon", e)
+      Kernel.pbMessage(engine_failure_message("add Fusion Pokemon"))
+    end
     def pokemon_import_preset
       preset = import_pokemon_preset
       return Kernel.pbMessage(_INTL("Preset file not found.")) unless preset
@@ -12805,7 +13411,7 @@ end
           # Fallback clone if Marshal fails
           pockets = bag_obj.instance_variable_get(:@pockets)
           if pockets.is_a?(Array)
-            backup_pockets = pockets.map { |pocket| pocket.is_a?(Array) ? pocket.map(&:dup) : pocket }
+            backup_pockets = pockets.map { |pocket| pocket.is_a?(Array) ? pocket.map { |item| item.is_a?(Array) ? item.dup : item } : pocket }
           end
         end
       end
@@ -13876,6 +14482,18 @@ module DeveloperMenu
             Kernel.pbMessage(_INTL("No legal abilities found."))
           end
         },
+        battle_menu_entry(:party_ability_slot, t(TR[:set_ability_slot])) {
+          slot_cmds = ["Slot 1 (Ability 1)", "Slot 2 (Ability 2)", "Slot 3 / Hidden (Ability Oculta)"]
+          slot_choice = Kernel.pbMessage(_INTL("Select Ability Slot:"), slot_cmds, -1)
+          if slot_choice >= 0
+            if set_pokemon_ability_slot!(pkmn, slot_choice)
+              curr_ab = pkmn.respond_to?(:ability) ? pkmn.ability : nil
+              notify_action_result("#{pkmn.name} Ability Slot", true, "set to #{slot_choice} (#{ability_display_name(curr_ab)}).", "failed.")
+            else
+              Kernel.pbMessage(unsupported_feature_message("Ability Slot setting"))
+            end
+          end
+        },
         battle_menu_entry(:party_ability_search_any, t(TR[:search_any_ability])) {
           hash = build_search_hash(:Ability)
           id = search_list("Abilities", hash)
@@ -13972,6 +14590,17 @@ module DeveloperMenu
             Kernel.pbMessage(engine_failure_message("change form"))
           end
         end,
+        simple_menu_action(t(TR[:set_form_override])) do
+          current_ov = respond_to?(:pokemon_form_override_value) ? pokemon_form_override_value(pkmn) : nil
+          default_v = current_ov.nil? ? (pkmn.form || 0) : current_ov
+          params = ChooseNumberParams.new; params.setRange(0, 50); params.setInitialValue(default_v)
+          form_id = Kernel.pbMessageChooseNumber(_INTL("Lock Pokemon to Form ID:"), params)
+          if set_pokemon_form_override!(pkmn, form_id)
+            notify_action_result("#{pkmn.name} Form Lock", true, "locked to form #{form_id} permanently.", "failed.")
+          else
+            Kernel.pbMessage(engine_failure_message("set form override"))
+          end
+        end,
         simple_menu_action(t(TR[:remove_form_override])) do
           if clear_pokemon_form_override!(pkmn)
             notify_action_result("#{pkmn.name} Form Override", true, "removed.", "failed.")
@@ -13989,7 +14618,7 @@ module DeveloperMenu
           rename_pokemon_via_ui!(pkmn)
         end,
         simple_menu_action(t(TR[:toggle_shiny])) do
-          current = pkmn.respond_to?(:shiny?) ? pkmn.shiny? : (pkmn.respond_to?(:shiny) ? pkmn.shiny : false)
+          current = pokemon_shiny_state(pkmn)
           if set_pokemon_shiny!(pkmn, !current)
             Kernel.pbMessage(state_toggle_message("#{pkmn.name} Shiny", !current))
           else
@@ -14034,6 +14663,75 @@ module DeveloperMenu
 
     def party_flags(pkmn)
       menu = [
+        simple_menu_action(t(TR[:set_tera_type])) do
+          if pkmn.respond_to?(:tera_type=) || pkmn.respond_to?(:forced_tera_type=)
+            current_tera = pokemon_tera_type(pkmn)
+            type_hash = build_search_hash(:Type)
+            type_id = search_list("Tera Types", type_hash)
+            if type_id
+              sym = get_symbol(:Type, type_id)
+              if set_pokemon_tera_type!(pkmn, sym)
+                notify_action_result("#{pkmn.name} Tera Type", true, "set to #{sym}.", "failed.")
+              else
+                Kernel.pbMessage(engine_failure_message("set Tera Type"))
+              end
+            end
+          else
+            Kernel.pbMessage(unsupported_feature_message("Tera Type (Gen 9)"))
+          end
+        end,
+        simple_menu_action(t(TR[:toggle_gmax])) do
+          if pkmn.respond_to?(:gmax_factor=) || pkmn.respond_to?(:giveGmaxFactor)
+            current_gmax = pokemon_gmax_factor?(pkmn)
+            if set_pokemon_gmax_factor!(pkmn, !current_gmax)
+              Kernel.pbMessage(state_toggle_message("#{pkmn.name} Gigantamax Factor", !current_gmax))
+            else
+              Kernel.pbMessage(engine_failure_message("toggle Gigantamax Factor"))
+            end
+          else
+            Kernel.pbMessage(unsupported_feature_message("Gigantamax Factor (Gen 8)"))
+          end
+        end,
+        simple_menu_action(t(TR[:toggle_shadow])) do
+          if pkmn.respond_to?(:shadowPokemon?) || pkmn.respond_to?(:makeShadow) || pkmn.respond_to?(:shadow=)
+            current_shadow = pokemon_shadow?(pkmn)
+            if set_pokemon_shadow!(pkmn, !current_shadow)
+              Kernel.pbMessage(state_toggle_message("#{pkmn.name} Shadow State", !current_shadow))
+            else
+              Kernel.pbMessage(engine_failure_message("toggle Shadow State"))
+            end
+          else
+            Kernel.pbMessage(unsupported_feature_message("Shadow Pokemon"))
+          end
+        end,
+        simple_menu_action(t(TR[:edit_heart_gauge])) do
+          if pkmn.respond_to?(:heartgauge) || pkmn.respond_to?(:heart_gauge)
+            params = ChooseNumberParams.new; params.setRange(0, 30000); params.setInitialValue(pokemon_heart_gauge(pkmn) || 0)
+            new_heart = Kernel.pbMessageChooseNumber(_INTL("Heart Gauge:"), params)
+            if set_pokemon_heart_gauge!(pkmn, new_heart)
+              notify_action_result("#{pkmn.name} Heart Gauge", true, "set to #{new_heart}.", "failed.")
+            else
+              Kernel.pbMessage(engine_failure_message("edit Heart Gauge"))
+            end
+          else
+            Kernel.pbMessage(unsupported_feature_message("Heart Gauge"))
+          end
+        end,
+        simple_menu_action(t(TR[:toggle_fateful])) do
+          current_fateful = pokemon_fateful_encounter?(pkmn)
+          if set_pokemon_fateful_encounter!(pkmn, !current_fateful)
+            Kernel.pbMessage(state_toggle_message("#{pkmn.name} Fateful Encounter", !current_fateful))
+          else
+            Kernel.pbMessage(engine_failure_message("toggle Fateful Encounter"))
+          end
+        end,
+        simple_menu_action(t(TR[:fix_obedience])) do
+          if make_pokemon_obedient!(pkmn)
+            notify_action_result("#{pkmn.name} Obedience", true, "now treats you as original trainer!", "failed.")
+          else
+            Kernel.pbMessage(engine_failure_message("adjust obedience"))
+          end
+        end,
         simple_menu_action(t(TR[:toggle_cannot_store])) do
           if pkmn.respond_to?(:cannot_store=)
             pkmn.cannot_store = !pkmn.cannot_store
@@ -14122,6 +14820,71 @@ module DeveloperMenu
       return unless Kernel.pbConfirmMessage(_INTL("Permanently delete this Pokemon?"))
       get_player.party.delete_at(index)
       notify_action_result("Party Pokemon", true, "deleted.", "failed.")
+    end
+
+    def party_trigger_evolution(pkmn)
+      return Kernel.pbMessage(_INTL("Eggs cannot evolve.")) if pokemon_egg_state(pkmn)
+      target_species = nil
+      # 1. Modern GameData::Species evolutions lookup
+      if defined?(GameData) && safe_const_get(GameData, :Species) && GameData::Species.respond_to?(:get)
+        spec_data = GameData::Species.get(pkmn.species) rescue nil
+        if spec_data && spec_data.respond_to?(:evolutions) && spec_data.evolutions && !spec_data.evolutions.empty?
+          cmds = spec_data.evolutions.map do |evo|
+            evo_spec = evo[0]
+            name = (GameData::Species.get(evo_spec).name rescue evo_spec.to_s)
+            _INTL("Evolve into {1}", name)
+          end
+          cmds.push(menu_back_label)
+          ch = Kernel.pbMessage(_INTL("Choose Evolution:"), cmds, -1)
+          if ch >= 0 && ch < spec_data.evolutions.length
+            target_species = spec_data.evolutions[ch][0]
+          end
+        end
+      end
+      # 2. Legacy check
+      if !target_species && defined?(pbCheckEvolution)
+        check_evo = pbCheckEvolution(pkmn) rescue nil
+        target_species = check_evo if check_evo && check_evo.to_i > 0
+      end
+      # 3. If no branches detected or manual pick requested
+      if !target_species
+        if Kernel.pbConfirmMessage(_INTL("No automatic evolution found. Search and select target species?"))
+          spec_hash = build_search_hash(:Species)
+          sel_id = search_list("Evolve To", spec_hash)
+          target_species = get_symbol(:Species, sel_id) if sel_id
+        end
+      end
+      return unless target_species
+
+      evolved = false
+      if defined?(pbEvolution)
+        begin
+          if defined?(pbFadeOutInWithUpdate)
+            pbFadeOutInWithUpdate { pbEvolution(pkmn, target_species) }
+          elsif defined?(pbFadeOutIn)
+            pbFadeOutIn { pbEvolution(pkmn, target_species) }
+          else
+            pbEvolution(pkmn, target_species)
+          end
+          evolved = true
+        rescue StandardError => e
+          log_error("pbEvolution", e)
+        end
+      end
+      if !evolved
+        if set_pokemon_species!(pkmn, target_species)
+          pkmn.reset_moves if pkmn.respond_to?(:reset_moves)
+          evolved = true
+        end
+      end
+      if evolved
+        notify_action_result("#{pkmn.name} Evolution", true, "evolved successfully!", "failed.")
+      else
+        Kernel.pbMessage(engine_failure_message("trigger evolution"))
+      end
+    rescue StandardError => e
+      log_error("Party Trigger Evolution", e)
+      Kernel.pbMessage(engine_failure_message("evolve Pokemon"))
     end
   end
 end
@@ -14318,8 +15081,75 @@ module DeveloperMenu
       false
     end
 
+    def battle_win_immediately!
+      battle = current_battle_object
+      return false unless battle
+      fainted_any = false
+      battle_battlers.each do |b|
+        next unless b
+        is_opp = b.opposes? if b.respond_to?(:opposes?)
+        is_opp = (b.index.to_i % 2 == 1) if !is_opp && b.respond_to?(:index)
+        if is_opp
+          b.hp = 0 if b.respond_to?(:hp=)
+          b.faint if b.respond_to?(:faint)
+          fainted_any = true
+        end
+      end
+      battle.decision = 1 if battle.respond_to?(:decision=)
+      battle.pbEndOfBattle(1) if !fainted_any && battle.respond_to?(:pbEndOfBattle)
+      refresh_battle_scene_after_heal!
+      true
+    rescue => e
+      log_error("Battle Win Immediately", e)
+      false
+    end
+
+    def battle_escape_immediately!
+      battle = current_battle_object
+      return false unless battle
+      if battle.respond_to?(:decision=)
+        battle.decision = 3
+      elsif battle.respond_to?(:pbEndOfBattle)
+        battle.pbEndOfBattle(3)
+      end
+      refresh_battle_scene_after_heal!
+      true
+    rescue => e
+      log_error("Battle Escape Immediately", e)
+      false
+    end
+
+    def battle_catch_wild_pokemon!
+      battle = current_battle_object
+      return false unless battle
+      is_wild = battle.respond_to?(:wildBattle?) ? battle.wildBattle? : false
+      return false unless is_wild
+      opponent = nil
+      battle_battlers.each do |b|
+        next unless b
+        is_opp = b.respond_to?(:opposes?) ? b.opposes? : (b.index.to_i % 2 == 1)
+        if is_opp
+          opponent = b
+          break
+        end
+      end
+      return false unless opponent
+      pkmn = opponent.pokemon if opponent.respond_to?(:pokemon)
+      pkmn = opponent.pkmn if pkmn.nil? && opponent.respond_to?(:pkmn)
+      return false unless pkmn
+      add_pkmn_silently(pkmn)
+      battle.decision = 4 if battle.respond_to?(:decision=)
+      refresh_battle_scene_after_heal!
+      true
+    rescue => e
+      log_error("Battle Catch Wild Pokemon", e)
+      false
+    end
     def battle_tools_menu
       menu = []
+      menu << battle_menu_entry(:battle_win, t(TR[:battle_win])) { run_battle_tool("Instant Win") { battle_win_immediately! } }
+      menu << battle_menu_entry(:battle_escape, t(TR[:battle_escape])) { run_battle_tool("Flee Battle") { battle_escape_immediately! } }
+      menu << battle_menu_entry(:battle_catch, t(TR[:battle_catch])) { run_battle_tool("Catch Wild") { battle_catch_wild_pokemon! } }
       menu << battle_menu_entry(:battle_direct_heal, "Heal Party") { run_battle_tool("Battle Heal") { heal_party_in_battle! } } if battle_access_enabled?(:battle_direct_heal)
       menu << battle_menu_entry(:battle_heal_active, "Heal Active Pokemon") { run_battle_tool("Active Heal") { heal_active_battle_pokemon! } } if battle_access_enabled?(:battle_heal_active)
       menu << battle_menu_entry(:battle_cure_status, "Cure Party Status") { run_battle_tool("Status Cure") { cure_party_status_in_battle! } } if battle_access_enabled?(:battle_cure_status)
@@ -15065,6 +15895,33 @@ class << ::DeveloperMenu
     false
   end
 
+  def patch_fast_forward_animation_class!
+    return false unless defined?(SpriteAnimation) && SpriteAnimation.is_a?(Class)
+    return true if SpriteAnimation.instance_variable_get(:@pokedebug_ff_anim_patched)
+    SpriteAnimation.instance_variable_set(:@pokedebug_ff_anim_patched, true)
+    if SpriteAnimation.method_defined?(:update_animation) && !SpriteAnimation.method_defined?(:_gm_orig_update_animation_dev)
+      SpriteAnimation.class_eval do
+        alias_method :_gm_orig_update_animation_dev, :update_animation
+        def update_animation
+          if @_animation_duration && @_animation_timer_start && @_animation_time_per_frame && @_animation_time_per_frame > 0
+            cur_time = defined?(System) && System.respond_to?(:uptime) ? System.uptime : Time.now.to_f
+            new_idx = ((cur_time - @_animation_timer_start) / @_animation_time_per_frame).to_i
+            if new_idx >= @_animation_duration
+              dispose_animation if respond_to?(:dispose_animation)
+              return
+            end
+          end
+          _gm_orig_update_animation_dev
+        rescue StandardError
+          dispose_animation if respond_to?(:dispose_animation)
+        end
+      end
+    end
+    true
+  rescue StandardError => e
+    ::DeveloperMenu.log_error("Patch Fast Forward Animation Class", e) if ::DeveloperMenu.respond_to?(:log_error)
+    false
+  end
   def apply_runtime_patches!(force = false)
     legacy_rgss1 = defined?(RUBY_VERSION) && RUBY_VERSION.to_s.index("1.8") == 0
     apply_patch_step!("Clamp Compatibility") { apply_clamp_compatibility_patch! }

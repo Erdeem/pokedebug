@@ -1,74 +1,68 @@
-# PokeDebug 3.2.0
+# PokeDebug 3.5.0
 
-PokeDebug is a cheat menu for Pokemon fangames built with Pokemon Essentials and related custom frameworks.
+PokeDebug is a universal cheat menu and quality-of-life developer toolkit engineered for Pokemon fangames built with Pokemon Essentials, MKXP, MKXP-Z, PSDK, TRuby, Kurisu VM, classic RGSS, and JoiPlay (Android).
 
-The project combines a modular Ruby runtime with a single-file Windows installer. It detects the target game's layout, chooses an appropriate injection strategy, and keeps fallbacks for older Essentials APIs, modern `GameData` engines, MKXP-Z, classic RGSS, and JoiPlay.
+The project combines a modular Ruby runtime with a self-contained, single-file Windows installer. It automatically detects the target game's engine layout, chooses the optimal injection strategy, and enforces strict compatibility fallbacks across Ruby 1.8.1 through 3.3+.
 
-> PokeDebug modifies game files. Keep a separate copy of the game and its save files before installing or using some functions.
+> **Notice:** PokeDebug modifies game scripts and variables. Always keep a separate backup of your game folder and save files before installing or using destructive debug actions.
 
-## Functions
+---
 
-- Engine, map, switch, variable, event, and battle tools.
-- Pokemon creation, storage management, and searchable species selection.
-- Item management with searchable, alphabetized lists and item IDs.
-- Player, party, stats, moves, abilities, forms, ribbons, and utilities.
-- Runtime engine profiling and feature availability checks.
-- Compatibility adapters.
-- Transactional installation with validation and rollback.
-- English, Portuguese, and Spanish interface.
-- JoiPlay support through a custom-made key item: "PokeDebug Device".
+## What's New in v3.5.0
 
-Some commands are hidden automatically when the required engine API is unavailable.
+- **Universal Dual-Rail Fast Forward**:
+  - Accelerates gameplay smoothly using dual-rail scaling: Frame-Rate scaling for classic RGSS/MKXP and a Continuous Virtual Accumulator Clock (C0 continuous) for delta-time engines (Essentials v20/v21+), eliminating animation out-of-bounds crashes. Default hotkey: `F8`.
+- **Form Override (Lock Form)**:
+  - Forces Pokemon to remain in a specific form permanently across battles. Ideal for Mega Evolutions, Primal Reversions, and regional variants that would normally revert after battle.
+- **Generation 9 & 8 Modern Attributes**:
+  - Full support for **Tera Type** (view and set any Tera Type via search) and **Gigantamax Factor** (`gmax_factor`) toggling.
+- **Shadow Pokemon & Heart Gauge Controls**:
+  - Transform Pokemon into Shadow state, purify instantly, or adjust Heart Gauge (0 to 30,000) for Colosseum/XD mechanics and fangames.
+- **Overworld Weather & Lighting Simulator**:
+  - Change overworld map weather on the fly (Clear, Rain, Storm, Snow, Blizzard, Sandstorm, Harsh Sun, Fog, Heavy Rain) and test Day/Night lighting tones.
+- **Emergency & Recovery Tools**:
+  - **Force / Emergency Save**: Save your game anywhere, even during cutscenes or on maps where saving is disabled (`save_disabled = true`).
+  - **Emergency Unstuck**: Freezes, collision blocks, and stuck event loops can be cleared with 1 click.
+  - **Manual Coordinate Warp**: Teleport to any Map ID, X, and Y even in 100% encrypted games without `MapInfos.rxdata`.
+- **Foolproof Smart Installer**:
+  - **WinRAR/7-Zip Safety**: Detects and warns if run inside temporary unextracted archive folders.
+  - **Automatic GUI File Picker**: Opens a native Windows dialog to choose `Game.exe` if the installer is run outside the game folder.
+  - **Drag-and-Drop**: Drag `Game.exe` directly onto `PokeDebug_Installer.cmd`.
+  - **Auto-Close Running Games**: Detects open game processes and offers to close them smoothly before file injection.
+  - **UAC Auto-Elevation**: Automatically requests Administrator privileges if the game is located in protected folders (like `Program Files`).
+  - **GitHub Auto-Update**: Queries `https://github.com/Erdeem/pokedebug` on startup and offers 1-click self-updating when new versions are released.
+  - **Infinite Fusion Memory Guard**: Protects against RAM exhaustion in games with over 170,000 fusion combinations.
 
-## Quick installation
-
-1. Download or build `PokeDebug_Installer.cmd`.
-2. Close the game completely.
-3. Run the `.cmd` in the game folder and choose your desired language.
-4. Use **Auto/1** unless a specific compatibility test requires another method.
-5. Choose the **hotkeys**.
-6. Confirm the installation.
-7. Start the game and open PokeDebug.
-
-Only `PokeDebug_Installer.cmd` is required for redistribution. The PowerShell installer and Ruby payload are compressed inside it and validated before extraction.
+---
 
 ## Opening PokeDebug
 
-### Keyboard defaults
+### Default Hotkeys
 
-| Action | Key |
-| --- | --- |
-| Open PokeDebug | `F6` |
-| Walk Through Walls | `F5` |
-| Heal party | `F9` |
+| Action | Default Key | Description |
+| :--- | :---: | :--- |
+| **Open PokeDebug Menu** | `F6` | Opens the main developer and cheat menu |
+| **Walk Through Walls (WTW)** | `F5` | Toggles collision pass-through / noclip |
+| **Fast Forward Speed** | `F8` | Cycles game speed: 1.0x -> 1.5x -> 2.0x -> 3.0x |
+| **Heal Party** | `F9` | Restores HP, PP, and cures status conditions instantly |
 
-The hotkeys can be changed during installation.
+*All hotkeys can be customized during installation or via `PokeDebug_Hotkeys.cfg`.*
 
-### PokeDebug Device
+### PokeDebug Device (JoiPlay / Mobile)
 
-On supported engines, PokeDebug registers a Key Item named **PokeDebug Device**. PokeDebug 3.1.4+ solves previous issues with the PokeDebug Device.
+On supported engines, PokeDebug registers a Key Item named **PokeDebug Device**.
+- Open the Bag -> Key Items -> **PokeDebug Device**.
+- To remove the item before transferring saves to clean games, choose **Extras > Remove Device From Save**.
 
-Older PokeDebug versions may already have written `:pokedebug_device` into an Essentials save. Load that save with 3.1.4 or newer, choose **Extras > Remove Device From Save**, and save the game once before uninstalling or moving the save to a clean game folder. **Engine > Enable Native Debug Only** performs the same cleanup, keeps the game's native `$DEBUG` options enabled, and disables future Device injection for that installation.
+### Mobile / Controller Shortcuts (JoiPlay)
 
-The item system currently adapts to:
+- Hold `L + R`
+- Hold `AUX1 + AUX2` or `X + Y`
+- Extra fallbacks: `L + A`, `R + B`, or `A + B + C`
 
-- Modern engines using `GameData::Item`.
-- Older symbolic caches using `$cache.items` and `ItemData`.
-- Classic numeric item databases using `PBItems`.
+### Script / Event Calls
 
-The device does not replace the existing hotkeys or script calls.
-
-### JoiPlay and mobile fallbacks
-
-- Hold `L + R`.
-- Hold `AUX1 + AUX2` or `X + Y`.
-- Extra combinations: `L + A`, `R + B`, or `A + B + C`.
-- Open the Bag and use **PokeDebug Device**.
-
-Controller mappings vary between JoiPlay profiles. The Key Item is recommended when keyboard events are not forwarded correctly.
-
-### Event and script calls
-
+If you want to trigger PokeDebug from an in-game NPC or script event:
 ```ruby
 pbPokeDebugMenu
 pbPokeDebugMobileMenu
@@ -76,122 +70,115 @@ pbOpenPokeDebugMenu
 pbDeveloperMenu
 ```
 
-## Supported layouts
+---
 
-The installer detects and handles common layouts including:
+## Key Features
 
-- `mkxp.json` preload injection.
-- Existing `Plugins` and preload-based projects.
-- `Data/Scripts.rxdata` patching.
-- `.rgssad`, `.rgss2a`, and `.rgss3a` archives.
-- Hybrid MKXP/RGSS projects.
-- Enigma Virtual Box indicators and unpack guidance.
+- **Engine & World**: Map warps (list & manual coordinates), switch/variable editor, map event inspector, field effects (Reborn/Rejuv), weather and time controls, PBS editors, wild encounter version picker, and roaming Pokemon editor.
+- **Battle Tools**: Instant Win, Escape Battle, 100% Catch Wild Pokemon, Full Revive & PP Restore in battle, Field Effect switcher.
+- **Pokemon Generator & Storage**: Add any species, custom Infinite Fusion generator, preset export/import, quick hatch party eggs, 1-click fill/clear PC boxes (with Infinite Fusion memory guard).
+- **Party & Stat Editor**: Form Override (form lock), Level & EXP, IVs (31) & EVs (252), Nature & Gender forcing, Ability Slot selector (1, 2, Hidden Ability), Tera Type, Gigantamax Factor, Shadow & Heart Gauge, 100% Obedience (OT Matcher), Move relearner / teaching, Nickname and Poke Ball changer.
+- **Player Tools**: Money, Game Corner Coins, Battle Points (BP), Badges, Outfits, Running Shoes, Pokedex completion, play time adjustment.
+- **Multilingual Support**: Fully localized in **English**, **Portugues**, and **Espanol**.
 
-Compatibility is capability-based. A game using a familiar Essentials version may still behave differently because fangames often replace core systems.
+---
 
-### Tested targets
+## Installation
 
-The in-installer list currently includes Essentials v19-v21 and tests involving Pokemon Nova, Uranium, Insurgence, Anil, Z, Mauve, Infinite Fusion 2, Unbreakable Ties, Burning Scale, Phoenix Rising, Vanguard, and Echo. Rejuvenation is marked as partial support.
+1. Download **`PokeDebug_Installer.cmd`** (or **`PokeDebug_Installer_Release.cmd`** for the public release).
+2. Place it in your game's root folder (where `Game.exe` is located).
+   *(If opened elsewhere, the installer will automatically open a window asking you to select `Game.exe`).*
+3. Close the game completely.
+4. Run `PokeDebug_Installer.cmd` and select your language (**EN / PT / ES**).
+5. Choose **[1] Auto Mode** (recommended) or specify your target engine.
+6. Configure your hotkeys and confirm.
+7. Launch your game and press **F6** (or use the **PokeDebug Device** in your Bag).
 
-Being listed means that an installation or compatibility path has been exercised; it does not guarantee that every debug command works in every release of that game.
+---
 
-## Safety and recovery
+## Supported Engines & Layouts
 
-The installer:
+- **Pokemon Essentials**: v15, v16, v17, v18, v19, v20, v20.1, v21, v21.1+ (includes native `meta.txt` plugin support for v20/v21).
+- **MKXP & MKXP-Z**: Preload script chaining via `mkxp.json` and `patches.json`.
+- **Pokemon SDK (PSDK / LiteRGSS2)**: Delayed runtime bootstrap via `Game.rb`.
+- **Yuri RGSS Runtime**: Native runtime evaluation bridge for encrypted `Scripts.pkg`.
+- **Root Script Runners**: Automatic hook injection for `main.rb` and `start.rb` (TRuby, Kurisu VM, custom bootstraps).
+- **Classic RGSS**: Encrypted `.rgssad`, `.rgss2a`, `.rgss3a`, and `Data/Scripts.rxdata`.
+- **Notable Tested Games**: Pokemon Essentials, Infinite Fusion, Uranium, Reborn, Rejuvenation, Desolation, Insurgence, Phoenix Rising, Vanguard, Nova, Anil, Mauve, Echo, and more.
 
-- Checks that the selected directory resembles a supported game.
-- Detects running game processes before modifying files.
-- Creates backups of files that will be changed.
-- Uses an installation transaction and rolls changes back after a failure.
-- Validates the installed payload.
-- Writes `PokeDebug_Install_Manifest.json`.
-- Writes `PokeDebug_Install_Report.txt`.
+---
 
-## Building from source
+## Building from Source
 
-Requirements:
+### Prerequisites
+- Windows PowerShell 5.1 or PowerShell 7+.
+- Ruby is optional (used for automated syntax verification).
 
-- Windows PowerShell 5.1 or newer.
-- Ruby is optional, but recommended for automatic syntax validation.
+### Build Commands
 
-Edit the numbered Ruby modules inside `Source Code/`. Do not edit `Source Code/pokedebug_menu.rb` directly because it is generated.
+1. **Regenerate the monolithic menu from modules**:
+   ```powershell
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Generate-PokeDebugMenu.ps1
+   ```
 
-Regenerate the combined Ruby source:
+2. **Run all 8 automated validation test suites**:
+   ```powershell
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Tests\Invoke-PokeDebugTests.ps1 -RequireRuby
+   ```
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Generate-PokeDebugMenu.ps1
-```
+3. **Build the master redistributable installer (`PokeDebug_Installer.cmd`)**:
+   ```powershell
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Build-Master.ps1
+   ```
 
-Build the redistributable installer:
+4. **Build the public GitHub release (`PokeDebug_Installer_Release.cmd`)**:
+   ```powershell
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Build-Master-2.ps1
+   ```
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Build-Master.ps1
-```
+---
 
-Build the public GitHub release:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Build-Master-2.ps1
-```
-
-The regular build creates the complete personal `PokeDebug_Installer.cmd`. The public build creates `PokeDebug_Installer_Release.cmd`.
-
-The build validates the PowerShell payload, checks Ruby syntax when Ruby is available, compresses the bundle, embeds it in the CMD, and performs a SHA-256 extraction self-test.
-
-### Automated tests
-
-Run the complete local validation suite with:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Tests\Invoke-PokeDebugTests.ps1 -RequireRuby
-```
-
-The suite checks every Ruby module independently, verifies that the generated monolithic menu is current, parses every PowerShell entry point, runs runtime smoke tests, enforces legacy-Ruby syntax guardrails, and prevents the exception policy from regressing. Regular personal and public builds run this suite automatically; `-SkipTests` is available only for troubleshooting.
-
-## Project structure
+## Project Structure
 
 ```text
 PokeDebug/
-|-- Build-Master.ps1
-|-- Build-Master-2.ps1               # public GitHub release build
-|-- Generate-PokeDebugMenu.ps1
-|-- PokeDebug_Installer.cmd          # generated redistribution file
-|-- PokeDebug_Installer_Release.cmd  # generated public redistribution file
-|-- README.md
-`-- Source Code/
-    |-- Install.ps1                  # installer source
-    |-- 00_header.rb                 # first editable runtime module
-    |-- 10_core_*.rb                 # core compatibility modules
-    |-- 11_*.rb ... 50_*.rb          # feature/runtime modules
-    |-- pokedebug_menu.rb            # generated Ruby payload
-    |-- preload_menu.rb              # MKXP/preload bootstrap
-    |-- pokedebug_psdk_bootstrap.rb  # Pokemon SDK delayed bootstrap
-    |-- yuri_bootstrap.rb            # Yuri/RGSS bridge
-    `-- animated_sprites_compat.rb   # personal-build sprite layer
+|-- Build-Master.ps1                 # Master build script (full redistribution)
+|-- Build-Master-2.ps1               # Public release build script
+|-- Generate-PokeDebugMenu.ps1       # Concatenates Source Code modules into pokedebug_menu.rb
+|-- PokeDebug_Installer.cmd          # Generated master installer bundle
+|-- PokeDebug_Installer_Release.cmd  # Generated public installer bundle
+|-- PokeDebug_Release.json           # Master release manifest
+|-- PokeDebug_Release_Public.json    # Public release manifest
+|-- README.md                        # Project documentation
+|-- Tests/                           # Comprehensive test suite
+|   `-- Invoke-PokeDebugTests.ps1
+`-- Source Code/                     # Modular Ruby & PowerShell sources
+    |-- 00_header.rb                 # Version, translations (TR), hotkeys
+    |-- 10_core_*.rb                 # Engine adapters, runtime patches, search & UI
+    |-- 11_input_and_mobile.rb       # Keyboard listeners & JoiPlay mobile gestures
+    |-- 20_engine.rb                 # Engine menu, weather, time, warp, force save
+    |-- 30_pokemon_items_player.rb   # PC storage, items, player stats & currencies
+    |-- 40_party.rb                  # Party editor, form lock, Tera, G-Max, moves
+    |-- 45_battle_tools.rb           # In-battle instant actions
+    |-- 50_runtime_patches.rb        # Defensive engine & graphics patches
+    |-- Install.ps1                  # Foolproof PowerShell installer core
+    |-- pokedebug_menu.rb            # Generated monolithic runtime payload
+    |-- preload_menu.rb              # MKXP/MKXP-Z preload loader
+    |-- pokedebug_psdk_bootstrap.rb  # PSDK delayed evaluation bridge
+    `-- yuri_bootstrap.rb            # Yuri RGSS native evaluation bridge
 ```
 
-The Ruby module order is defined in `Generate-PokeDebugMenu.ps1`. New runtime components must be added there before rebuilding.
-
-## Known limitations
-
-- Heavily customized engines may need a project-specific adapter.
-- Packed executables can require unpacking before script injection is possible.
-- Some debug actions depend on APIs removed by the game's developer.
-- Mobile controller mappings depend on the JoiPlay profile and Android device.
-
-## Beta/Dev functions
-
-- Custom animated sprites (Needs patch to work)
-- PokeFallen Patch (Not working)
+---
 
 ## Credits
 
-- **Kzuran** — Creator
+- **Kzuran** - Creator & Lead Developer
+- **Erdeem** - Co-maintainer & GitHub Release Host
+
+---
 
 ## Project Status / Mensagem
 
-**EN:** I no longer plan to actively maintain this project and am leaving it in the hands of the community. Feel free to fork the repository or submit pull requests.
+**EN:** PokeDebug 3.5.0 represents the definitive, universal release supporting both classic and modern Pokemon fangames. Feel free to fork the repository or submit pull requests.
 
-**PT-BR:** Atualmente não planejo mais manter este projeto ativamente e vou deixá-lo nas mãos da comunidade. Sinta-se livre para fazer um fork ou enviar um pull request.
-
-
+**PT-BR:** O PokeDebug 3.5.0 representa o lancamento definitivo e universal com suporte tanto a fangames classicos quanto modernos. Sinta-se livre para fazer um fork ou enviar um pull request.

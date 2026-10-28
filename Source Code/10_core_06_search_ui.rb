@@ -4,6 +4,7 @@ module DeveloperMenu
       return unless allow_map_runtime_update?
       ensure_runtime_patches!
       ensure_custom_pp_limit_persistence! if respond_to?(:ensure_custom_pp_limit_persistence!)
+      ensure_pokemon_form_overrides_persistence! if respond_to?(:ensure_pokemon_form_overrides_persistence!)
       if respond_to?(:ensure_pokedebug_device!)
         current_f = defined?(Graphics) && Graphics.respond_to?(:frame_count) ? Graphics.frame_count.to_i : 0
         if !@pokedebug_device_in_bag_confirmed || (current_f % 60) == 0
@@ -391,8 +392,15 @@ module DeveloperMenu
         end
         # RGSS1 can load files packed inside .rgssad even though File.file?
         # correctly reports false for their virtual archive paths.
-        if !result && defined?(RUBY_VERSION) && RUBY_VERSION.to_s.index("1.8") == 0
-          result = safe_load_data("Data/MapInfos.rxdata")
+        if !result
+          ["Data/MapInfos.rxdata", "Data/MapInfos.rvdata2", "Data/MapInfos.rvdata"].each do |vpath|
+            begin
+              result = safe_load_data(vpath)
+              break if result
+            rescue StandardError
+              nil
+            end
+          end
         end
         result
       end

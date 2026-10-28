@@ -1,0 +1,34 @@
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+desktop.ini
+$RECYCLE.BIN/
+
+# IDE & Editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Logs and runtime diagnostics
+*.log
+developer_menu_errors.log
+developer_menu_boot_state.dat
+pokedebug_pokefallen.log
+animated_sprites_error.log
+animated_sprites_debug.log
+PokeDebug_Install_Report.txt
+PokeDebug_Sprites_Report.txt
+PokeDebug_Install_Manifest.json
+
+# Backups and temporary files
+*.bak
+*.tmp
+*.swp
+*~
+
+# Indigo & local caches
+IndigoCache/
+.cache/

@@ -141,6 +141,7 @@ module DeveloperMenu
       profile[:native_pokemon_editor_available] = native_pokemon_editor_available?
       profile[:native_pokemon_editor_safe] = profile[:native_pokemon_editor_available] && native_pokemon_editor_safe_slug?(slug)
       profile[:preferred_pokemon_editor] = preferred_pokemon_editor_name(slug, profile[:native_pokemon_editor_available])
+      profile[:ruby_engine] = defined?(RUBY_ENGINE) ? RUBY_ENGINE.to_s : (defined?(TRUBY) ? "TRuby" : "mri")
       profile[:known_notes] = notes
       profile
     rescue => e

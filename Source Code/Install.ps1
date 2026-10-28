@@ -17,8 +17,36 @@ param(
     [switch]$DryRun,
     [switch]$Uninstall,
     [switch]$RestoreBackups,
-    [switch]$NonInteractive
+    [switch]$NonInteractive,
+    [switch]$NoUpdateCheck
 )
+
+# Safety check: Detect if running directly inside unextracted WinRAR / 7-Zip temporary directories
+$script:CurrentLaunchDir = if (-not [string]::IsNullOrWhiteSpace($env:POKEDEBUG_LAUNCH_DIR)) { $env:POKEDEBUG_LAUNCH_DIR } else { (Get-Location).Path }
+$script:IsTempArchiveDir = $false
+if ($script:CurrentLaunchDir -match '(?i)[\\/](AppData[\\/]Local[\\/]|)Temp[\\/](Rar\$|7z[A-Fa-f0-9]+|wzs)' -or $script:CurrentLaunchDir -match '(?i)Temp[\\/]Rar\$') {
+    $script:IsTempArchiveDir = $true
+}
+if ($script:IsTempArchiveDir -and -not $NonInteractive) {
+    Clear-Host
+    Write-Host ""
+    Write-Host " ======================================================================" -ForegroundColor Yellow
+    Write-Host "  AVISO: VOCE EXECUTOU O INSTALADOR DE DENTRO DO WINRAR / 7-ZIP!" -ForegroundColor Red
+    Write-Host "  WARNING: YOU ARE RUNNING DIRECTLY FROM WINRAR / 7-ZIP TEMP FOLDER!" -ForegroundColor Red
+    Write-Host " ======================================================================" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  Voce precisa EXTRAIR o jogo e o instalador para uma pasta normal" -ForegroundColor White
+    Write-Host "  antes de instalar. Nao execute de dentro do arquivo compactado." -ForegroundColor White
+    Write-Host ""
+    Write-Host "  1. Feche esta janela." -ForegroundColor Cyan
+    Write-Host "  2. Clique com o botao direito no arquivo .zip/.rar do jogo e escolha 'Extrair Aqui'." -ForegroundColor Cyan
+    Write-Host "  3. Abra a pasta extraida e execute o instalador la dentro." -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host " ----------------------------------------------------------------------" -ForegroundColor Gray
+    Write-Host " Pressione qualquer tecla para sair / Press any key to exit..." -ForegroundColor Yellow
+    [void][System.Console]::ReadKey($true)
+    exit 1
+}
 
 if ($GameDir -eq "__POKEDEBUG_CONHOST__") {
     $GameDir = "."
@@ -30,7 +58,7 @@ if ($script:GameDirWasDefault -and -not [string]::IsNullOrWhiteSpace($env:POKEDE
 }
 
 $ErrorActionPreference = "Stop"
-$PokeDebugInstallerVersion = "3.1.4"
+$PokeDebugInstallerVersion = "3.5.0"
 
 # Supported hosts:
 # - Windows PowerShell 5.1 or newer Desktop edition
@@ -219,6 +247,29 @@ function Format-State([bool]$Value) {
     return "OFF"
 }
 
+
+function Test-RootScriptCandidate([string]$ResolvedGameDir) {
+    $candidates = @("main.rb", "start.rb")
+    foreach ($cand in $candidates) {
+        $p = Join-Path $ResolvedGameDir $cand
+        if (Test-Path -LiteralPath $p -PathType Leaf) {
+            return $p
+        }
+    }
+    return $null
+}
+
+function Inject-RootScript([string]$ScriptPath) {
+    if (-not (Test-Path -LiteralPath $ScriptPath -PathType Leaf)) { return $false }
+    $content = [System.IO.File]::ReadAllText($ScriptPath, [System.Text.Encoding]::UTF8)
+    $hook = "require_relative 'preload_menu' if File.file?('preload_menu.rb') rescue nil"
+    if ($content.Contains("preload_menu")) { return $true }
+    [void](Backup-File $ScriptPath)
+    $newContent = $hook + [Environment]::NewLine + $content
+    Write-Utf8FileAtomic $ScriptPath $newContent
+    return $true
+}
+
 function Get-InjectionStrategy {
     param($Diagnostics)
     $strategy = [ordered]@{
@@ -263,6 +314,11 @@ function Get-InjectionStrategy {
         $strategy.Confidence = "Medium"
         $strategy.Summary = "Main script payload will be injected into the game data."
         $strategy.Color = "Cyan"
+        } elseif (Test-RootScriptCandidate $Diagnostics.GameDir) {
+        $strategy.Name = "Root Script Runner (main.rb / start.rb)"
+        $strategy.Confidence = "High"
+        $strategy.Summary = "Entry point script detected; PokeDebug preload hook will be chained cleanly."
+        $strategy.Color = "Green"
     } elseif ($Diagnostics.HasPluginScripts) {
         $strategy.Name = "PluginScripts-Like Layout"
         $strategy.Confidence = "Low"
@@ -451,6 +507,266 @@ function Read-MenuChoice {
         if (-not [string]::IsNullOrEmpty($Prompt)) {
             Write-Host $Prompt -NoNewline
         }
+    }
+}
+
+
+
+function Invoke-PokeDebugSelfUpdateCheck {
+    param(
+        [string]$CurrentVersion = $PokeDebugInstallerVersion,
+        [string]$SelfPath = $env:POKEDEBUG_SELF,
+        [bool]$IsNonInteractive = $NonInteractive,
+        [bool]$SkipCheck = $NoUpdateCheck.IsPresent
+    )
+    if ($SkipCheck -or $IsNonInteractive -or [string]::IsNullOrWhiteSpace($SelfPath) -or -not (Test-Path -LiteralPath $SelfPath -PathType Leaf)) {
+        return
+    }
+
+    $isPublicRelease = (Split-Path -Leaf $SelfPath) -match 'Release'
+    $manifestName = if ($isPublicRelease) { "PokeDebug_Release_Public.json" } else { "PokeDebug_Release.json" }
+    $urls = @(
+        "https://raw.githubusercontent.com/Erdeem/pokedebug/main/$manifestName",
+        "https://raw.githubusercontent.com/Erdeem/PokeDebug/main/$manifestName",
+        "https://raw.githubusercontent.com/Kzuran/PokeDebug/main/$manifestName"
+    )
+    if (-not [string]::IsNullOrWhiteSpace($env:POKEDEBUG_UPDATE_URL)) {
+        $urls = @($env:POKEDEBUG_UPDATE_URL) + $urls
+    }
+
+    $remoteManifest = $null
+    $manifestSourceUrl = $null
+    foreach ($url in $urls) {
+        try {
+            $req = [System.Net.HttpWebRequest]::Create($url)
+            $req.Timeout = 2500
+            $req.ReadWriteTimeout = 2500
+            $req.UserAgent = "PokeDebug-Installer/$CurrentVersion"
+            $resp = $req.GetResponse()
+            $stream = $resp.GetResponseStream()
+            $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8)
+            $jsonText = $reader.ReadToEnd()
+            $reader.Dispose()
+            $stream.Dispose()
+            $resp.Dispose()
+            if (-not [string]::IsNullOrWhiteSpace($jsonText)) {
+                $parsed = $jsonText | ConvertFrom-Json
+                if ($parsed.product -eq "PokeDebug" -and $parsed.version) {
+                    $remoteManifest = $parsed
+                    $manifestSourceUrl = $url
+                    break
+                }
+            }
+        } catch {
+            # Network offline, GitHub unreachable, or timed out - fail silently and proceed
+        }
+    }
+
+    if ($null -eq $remoteManifest -or [string]::IsNullOrWhiteSpace($remoteManifest.version)) {
+        return
+    }
+
+    $remoteVerStr = [string]$remoteManifest.version
+    $isNewer = $false
+    try {
+        $currentParsed = [version]$CurrentVersion
+        $remoteParsed = [version]$remoteVerStr
+        $isNewer = $remoteParsed -gt $currentParsed
+    } catch {
+        $isNewer = ($remoteVerStr -ne $CurrentVersion)
+    }
+
+    if (-not $isNewer) {
+        return
+    }
+
+    # New version detected! Ask permission to self-update
+    Write-Host ""
+    Write-Host " ======================================================================" -ForegroundColor Green
+    Write-Host (Get-Msg "  NEW POKEDEBUG VERSION DETECTED ON GITHUB!" "  NOVA VERSAO DO POKEDEBUG DETECTADA NO GITHUB!" "  NUEVA VERSION DE POKEDEBUG DETECTADA EN GITHUB!") -ForegroundColor White -BackgroundColor DarkGreen
+    Write-Host " ======================================================================" -ForegroundColor Green
+    Write-Host ((Get-Msg "  Current Version / Versao Atual : v{0}" "  Versao Atual / Current Version : v{0}" "  Version Actual / Current Version : v{0}") -f $CurrentVersion) -ForegroundColor Gray
+    Write-Host ((Get-Msg "  New Version / Nova Versao      : v{0}" "  Nova Versao / New Version      : v{0}" "  Nueva Version / New Version      : v{0}") -f $remoteVerStr) -ForegroundColor Green
+    Write-Host ""
+    Write-Host (Get-Msg "  Would you like to self-update the installer now?" "  Deseja que o instalador se autoatualize agora?" "  Deseas autoactualizar el instalador ahora?") -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host (Get-Msg "  [1] Yes, self-update now (Recommended)" "  [1] Sim, autoatualizar agora (Recomendado)" "  [1] Si, autoactualizar ahora (Recomendado)") -ForegroundColor Green
+    Write-Host (Get-Msg "  [2] No, continue with current version" "  [2] Nao, continuar com a versao atual" "  [2] No, continuar con la version actual") -ForegroundColor Gray
+    Write-Host ""
+
+    $updateChoice = (Read-MenuChoice " > " @("1", "2") "1").Trim()
+    if ($updateChoice -ne "1") {
+        return
+    }
+
+    Log (Get-Msg "Downloading latest installer from GitHub..." "Baixando novo instalador do GitHub..." "Descargando nuevo instalador desde GitHub...") "Cyan"
+    
+    $downloadUrl = $remoteManifest.download_url
+    if ([string]::IsNullOrWhiteSpace($downloadUrl)) {
+        $isPublicRelease = (Split-Path -Leaf $SelfPath) -match 'Release'
+        $remoteFilename = if ($isPublicRelease) { "PokeDebug_Installer_Release.cmd" } else { "PokeDebug_Installer.cmd" }
+        if (-not [string]::IsNullOrWhiteSpace($manifestSourceUrl)) {
+            $repoBase = $manifestSourceUrl.Substring(0, $manifestSourceUrl.LastIndexOf('/'))
+            $downloadUrl = "$repoBase/$remoteFilename"
+        } else {
+            $downloadUrl = "https://raw.githubusercontent.com/Erdeem/pokedebug/main/$remoteFilename"
+        }
+    }
+
+    $tempNewCmd = Join-Path ([System.IO.Path]::GetTempPath()) ("PokeDebug_Update_" + [guid]::NewGuid().ToString("N") + ".cmd")
+    try {
+        $webClient = New-Object System.Net.WebClient
+        $webClient.Headers.Add("User-Agent", "PokeDebug-Updater/$CurrentVersion")
+        $webClient.DownloadFile($downloadUrl, $tempNewCmd)
+        $webClient.Dispose()
+
+        if (-not (Test-Path -LiteralPath $tempNewCmd -PathType Leaf) -or (Get-Item -LiteralPath $tempNewCmd).Length -lt 20000) {
+            throw (Get-Msg "Downloaded update file is invalid or incomplete." "O arquivo baixado e invalido ou incompleto." "El archivo descargado no es valido.")
+        }
+
+        $downloadLines = [System.IO.File]::ReadAllLines($tempNewCmd, [System.Text.Encoding]::ASCII)
+        if (-not ($downloadLines -contains "__POKEDEBUG_PAYLOAD_BELOW__")) {
+            throw (Get-Msg "Downloaded update file does not contain a valid PokeDebug bundle." "O arquivo baixado nao contem um pacote PokeDebug valido." "El archivo descargado no es valido.")
+        }
+
+        Log (Get-Msg "Update validated! Replacing installer and restarting..." "Atualizacao validada! Substituindo instalador e reiniciando..." "Actualizacion validada! Reiniciando...") "Green"
+
+        $updaterBatch = Join-Path ([System.IO.Path]::GetTempPath()) ("PokeDebug_ApplyUpdate_" + [guid]::NewGuid().ToString("N") + ".bat")
+        $batchContent = @"
+@echo off
+timeout /t 1 /nobreak >nul
+copy /y "$tempNewCmd" "$SelfPath" >nul
+del "$tempNewCmd" >nul
+start "" "$SelfPath" %*
+del "%~f0" >nul
+exit
+"@
+        [System.IO.File]::WriteAllText($updaterBatch, $batchContent, [System.Text.Encoding]::ASCII)
+        Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$updaterBatch`"" -WindowStyle Hidden
+        exit 0
+    } catch {
+        Log ((Get-Msg "Auto-update failed: {0}. Continuing with current version..." "A autoatualizacao falhou: {0}. Continuando com a versao atual..." "Fallo la actualizacion: {0}. Continuando...") -f $_.Exception.Message) "Yellow"
+        Start-Sleep -Seconds 2
+    }
+}
+
+function Test-IsElevatedAdministrator {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Test-IsGameDirectory($Diagnostics) {
+    if ($null -eq $Diagnostics) { return $false }
+    return [bool]($Diagnostics.HasPsdk -or $Diagnostics.HasYuriRgss -or $Diagnostics.HasMkxp -or $Diagnostics.HasScriptsRxdata -or $Diagnostics.HasRgssArchive -or $Diagnostics.HasPluginScripts -or $Diagnostics.EnigmaPacked)
+}
+
+function Resolve-ValidGameDirectory([string]$InitialDir, [bool]$IsNonInteractive) {
+    $targetDir = $InitialDir
+    if (Test-Path -LiteralPath $targetDir -PathType Leaf) {
+        $targetDir = Split-Path -Parent $targetDir
+    }
+
+    # 1. Check if current folder is a valid game
+    $diag = Get-InstallDiagnostics $targetDir
+    if (Test-IsGameDirectory $diag) {
+        return $targetDir
+    }
+
+    # 2. Check if installer is in a subfolder (Data, Plugins, etc.)
+    try {
+        $parentDir = Split-Path -Parent (Resolve-Path -LiteralPath $targetDir).Path
+        if (-not [string]::IsNullOrWhiteSpace($parentDir) -and (Test-Path -LiteralPath $parentDir -PathType Container)) {
+            $parentDiag = Get-InstallDiagnostics $parentDir
+            if (Test-IsGameDirectory $parentDiag) {
+                Log ((Get-Msg "Installer placed in subfolder. Pokemon game found in parent folder: {0}" "Instalador colocado em subpasta. Jogo Pokemon encontrado na pasta pai: {0}" "Instalador en subcarpeta. Juego detectado en carpeta superior: {0}") -f $parentDir) "Green"
+                return $parentDir
+            }
+        }
+    } catch {
+    }
+
+    # 3. Check immediate subdirectories (in case user placed installer right next to game folder)
+    try {
+        $subDirs = @(Get-ChildItem -LiteralPath $targetDir -Directory -ErrorAction SilentlyContinue)
+        foreach ($sub in $subDirs) {
+            $subDiag = Get-InstallDiagnostics $sub.FullName
+            if (Test-IsGameDirectory $subDiag) {
+                Log ((Get-Msg "Pokemon game found in subfolder: {0}" "Jogo Pokemon encontrado na subpasta: {0}" "Juego detectado en subcarpeta: {0}") -f $sub.FullName) "Green"
+                return $sub.FullName
+            }
+        }
+    } catch {
+    }
+
+    # 4. Open interactive GUI File/Folder Picker if not non-interactive
+    if (-not $IsNonInteractive) {
+        Write-Host ""
+        Write-Host " ======================================================================" -ForegroundColor Yellow
+        Write-Host (Get-Msg "  POKEMON GAME NOT FOUND IN CURRENT FOLDER!" "  JOGO POKEMON NAO ENCONTRADO NESTA PASTA!" "  JUEGO POKEMON NO ENCONTRADO EN ESTA CARPETA!") -ForegroundColor Yellow
+        Write-Host " ======================================================================" -ForegroundColor Yellow
+        Write-Host (Get-Msg "  Opening file picker to select your game executable (Game.exe)..." "  Abrindo janela para voce selecionar o Game.exe do seu jogo Pokemon..." "  Abriendo ventana para seleccionar Game.exe...") -ForegroundColor Cyan
+        Write-Host ""
+
+        try {
+            Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
+            $fileDialog = New-Object System.Windows.Forms.OpenFileDialog
+            $fileDialog.Title = Get-Msg "Select Game.exe of your Pokemon game" "Selecione o Game.exe do seu jogo Pokemon" "Selecciona el Game.exe de tu juego Pokemon"
+            $fileDialog.Filter = "Pokemon Game (*.exe;*.ini;*.rxdata)|*.exe;*.ini;*.rxdata|All files (*.*)|*.*"
+            $fileDialog.InitialDirectory = if (Test-Path -LiteralPath $targetDir) { $targetDir } else { [Environment]::GetFolderPath("Desktop") }
+            if ($fileDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+                $chosen = $fileDialog.FileName
+                $chosenDir = Split-Path -Parent $chosen
+                $chosenDiag = Get-InstallDiagnostics $chosenDir
+                if (Test-IsGameDirectory $chosenDiag) {
+                    Log ((Get-Msg "Pokemon game selected successfully: {0}" "Jogo Pokemon selecionado com sucesso: {0}" "Juego seleccionado con exito: {0}") -f $chosenDir) "Green"
+                    return $chosenDir
+                }
+                return $chosenDir
+            }
+        } catch {
+        }
+    }
+
+    return $targetDir
+}
+
+function Ensure-GameProcessesClosed([string]$ResolvedGameDir, [bool]$IsNonInteractive) {
+    $runningGames = @(Get-RunningGameProcesses $ResolvedGameDir)
+    if ($runningGames.Count -eq 0) { return }
+
+    $runningNames = ($runningGames | ForEach-Object { "{0} (PID {1})" -f $_.ProcessName, $_.Id }) -join ", "
+    if ($IsNonInteractive) {
+        $runningGames | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }
+        Start-Sleep -Milliseconds 600
+        return
+    }
+
+    Write-Host ""
+    Write-Host " ======================================================================" -ForegroundColor Yellow
+    Write-Host (Get-Msg "  GAME IS CURRENTLY RUNNING!" "  O JOGO ESTA ABERTO NESTE MOMENTO!" "  EL JUEGO ESTA ABIERTO AHORA!") -ForegroundColor Red
+    Write-Host " ======================================================================" -ForegroundColor Yellow
+    Write-Host ((Get-Msg "  Running process: {0}" "  Processo aberto: {0}" "  Proceso abierto: {0}") -f $runningNames) -ForegroundColor White
+    Write-Host ""
+    Write-Host (Get-Msg "  PokeDebug needs the game closed to safely install files." "  O PokeDebug precisa que o jogo esteja fechado para instalar com seguranca." "  PokeDebug necesita que el juego este cerrado para instalar.") -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host (Get-Msg "  [1] Close game automatically and continue (Recommended)" "  [1] Fechar o jogo automaticamente e continuar (Recomendado)" "  [1] Cerrar el juego automaticamente y continuar (Recomendado)") -ForegroundColor Green
+    Write-Host (Get-Msg "  [2] Cancel installation" "  [2] Cancelar instalacao" "  [2] Cancelar instalacion") -ForegroundColor Gray
+    Write-Host ""
+    $closeChoice = (Read-MenuChoice " > " @("1", "2") "1").Trim()
+    if ($closeChoice -eq "1") {
+        Log (Get-Msg "Closing running game process(es)..." "Fechando processo(s) do jogo..." "Cerrando proceso(s) del juego...") "Cyan"
+        foreach ($proc in $runningGames) {
+            try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+        }
+        Start-Sleep -Milliseconds 800
+        $stillRunning = @(Get-RunningGameProcesses $ResolvedGameDir)
+        if ($stillRunning.Count -gt 0) {
+            throw ((Get-Msg "Could not close game automatically: {0}. Please close it in Task Manager." "Nao foi possivel fechar o jogo automaticamente: {0}. Feche pelo Gerenciador de Tarefas." "No se pudo cerrar el juego: {0}.") -f (($stillRunning | ForEach-Object { $_.ProcessName }) -join ", "))
+        }
+        Log (Get-Msg "Game closed successfully. Continuing..." "Jogo fechado com sucesso. Continuando..." "Juego cerrado. Continuando...") "Green"
+    } else {
+        throw (Get-Msg "Installation aborted because the game was still running." "Instalacao cancelada porque o jogo ainda estava em execucao." "Instalacion cancelada porque el juego estaba abierto.")
     }
 }
 
@@ -761,9 +1077,22 @@ function Show-HotkeysMenu {
     }
 }
 
-function Show-AlreadyInstalledPrompt {
-    Show-FramedMessage @((Get-Msg "PokeDebug is already installed." "PokeDebug ja esta instalado." "PokeDebug ya esta instalado."))
-    return (Read-FramedChoice (Get-Msg "[1] Patch anyway [0] Go back : " "[1] Aplicar patch assim mesmo [0] Voltar : " "[1] Aplicar parche de todos modos [0] Volver : ") @("1","0") "0")
+function Show-AlreadyInstalledPrompt($InstalledVersion, $NewVersion) {
+    Print-Header
+    Write-Host ""
+    Show-FramedMessage @(
+        (Get-Msg ("PokeDebug is already installed (v{0})." -f $InstalledVersion) ("O PokeDebug ja esta instalado nesta pasta (v{0})." -f $InstalledVersion) ("PokeDebug ya esta instalado en esta carpeta (v{0})." -f $InstalledVersion)),
+        (Get-Msg ("Installer version: v{0}" -f $NewVersion) ("Versao do instalador: v{0}" -f $NewVersion) ("Version del instalador: v{0}" -f $NewVersion))
+    )
+    Write-Host ""
+    Show-MenuItem "1" (Get-Msg "Update / Reinstall (Keep your settings)" "Atualizar / Reinstalar (Mantem suas configuracoes)" "Actualizar / Reinstalar (Mantiene configuraciones)") ""
+    Show-MenuItem "2" (Get-Msg "Change Hotkeys (Menu, WTW, Speed, Heal)" "Alterar Teclas de Atalho (Menu, WTW, Velocidade, Cura)" "Cambiar Teclas de Atajo (Menu, WTW, Velocidad, Cura)") ""
+    Show-MenuItem "3" (Get-Msg "Uninstall PokeDebug completely" "Desinstalar o PokeDebug completamente" "Desinstalar PokeDebug por completo") ""
+    Show-MenuItem "4" (Get-Msg "Restore original game backups" "Restaurar backups originais do jogo" "Restaurar copias de seguridad originales") ""
+    Show-MenuItem "0" (Get-Msg "Exit" "Sair" "Salir") ""
+    Write-Host ""
+    Show-KeyboardPrompt "1,2,3,4,0"
+    return (Read-MenuChoice " > " @("1","2","3","4","0") "1").Trim()
 }
 
 function Show-EnigmaPrompt {
@@ -3310,6 +3639,7 @@ try {
     $DisableCompilerBootstrap = $false
 
     if (-not $explicitModeSelected -and -not $NonInteractive) {
+        Invoke-PokeDebugSelfUpdateCheck
         $menuLoop = $true
         while ($menuLoop) {
             $mainAction = Show-MainActionMenu
@@ -3391,8 +3721,31 @@ try {
                     (Test-Path (Join-Path $ResolvedProbeDir "preload_menu.rb") -PathType Leaf) -or
                     (Test-Path (Join-Path $ResolvedProbeDir "preload_gm.rb") -PathType Leaf)
                 if ($alreadyInstalled) {
-                    $patchAnyway = Show-AlreadyInstalledPrompt
-                    if ($patchAnyway -ne "1") {
+                    $installedVer = "3.5.0"
+                    $manifestFile = Join-Path $ResolvedProbeDir "PokeDebug_Install_Manifest.json"
+                    if (Test-Path -LiteralPath $manifestFile -PathType Leaf) {
+                        try {
+                            $manifestJson = [System.IO.File]::ReadAllText($manifestFile, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+                            if ($manifestJson.plugin_version) { $installedVer = $manifestJson.plugin_version }
+                        } catch {}
+                    }
+                    $manageChoice = Show-AlreadyInstalledPrompt $installedVer $PokeDebugInstallerVersion
+                    if ($manageChoice -eq "0") {
+                        exit 0
+                    } elseif ($manageChoice -eq "2") {
+                        $hotkeysResult = Show-HotkeysMenu
+                        $MenuKey = $hotkeysResult.Menu
+                        $WtwKey = $hotkeysResult.Wtw
+                        $HealKey = $hotkeysResult.Heal
+                    } elseif ($manageChoice -eq "3") {
+                        $Uninstall = [switch]::new($true)
+                        $menuLoop = $false
+                        break
+                    } elseif ($manageChoice -eq "4") {
+                        $RestoreBackups = [switch]::new($true)
+                        $menuLoop = $false
+                        break
+                    } elseif ($manageChoice -ne "1") {
                         continue
                     }
                 }
@@ -3418,7 +3771,7 @@ try {
     if ($null -eq $resolvedGameDir) {
         throw ((Get-Msg "Game directory does not exist: {0}" "O diretorio do jogo nao existe: {0}" "El directorio del juego no existe: {0}") -f $GameDir)
     }
-    $GameDir = $resolvedGameDir.Path
+    $GameDir = Resolve-ValidGameDirectory $resolvedGameDir.Path $NonInteractive
     $windowsRoot = [System.IO.Path]::GetFullPath($env:windir).TrimEnd('\')
     $normalizedGameDir = [System.IO.Path]::GetFullPath($GameDir).TrimEnd('\')
     if ($script:GameDirWasDefault -and ($normalizedGameDir.Equals($windowsRoot, [System.StringComparison]::OrdinalIgnoreCase) -or $normalizedGameDir.StartsWith($windowsRoot + '\', [System.StringComparison]::OrdinalIgnoreCase))) {
@@ -3438,7 +3791,20 @@ try {
     }
 
     if (-not (Test-DirectoryWritable $GameDir)) {
-        throw (Get-Msg "Game directory is not writable. Try moving the installer or running with proper permissions." "A pasta do jogo nao permite gravacao. Tente mover o instalador ou executar com permissoes adequadas." "La carpeta do jogo nao permite escrita. Intenta mover o instalador ou executarlo con permisos adecuados.")
+        $isElevated = Test-IsElevatedAdministrator
+        if (-not $isElevated -and -not $NonInteractive) {
+            Log (Get-Msg "Directory requires Administrator privileges. Requesting Windows UAC elevation..." "A pasta requer privilegios de Administrador. Solicitando elevacao do Windows UAC..." "La carpeta requiere privilegios de Administrador. Solicitando elevacion UAC...") "Yellow"
+            $uacArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"", "-GameDir", "`"$GameDir`"")
+            if (-not [string]::IsNullOrWhiteSpace($Language)) { $uacArgs += @("-Language", "`"$Language`"") }
+            if ($DryRun) { $uacArgs += "-DryRun" }
+            if ($Uninstall) { $uacArgs += "-Uninstall" }
+            if ($RestoreBackups) { $uacArgs += "-RestoreBackups" }
+            $uacProc = Start-Process -FilePath "powershell.exe" -ArgumentList $uacArgs -Verb RunAs -PassThru
+            $uacProc.WaitForExit()
+            exit $uacProc.ExitCode
+        } else {
+            throw (Get-Msg "Game directory is not writable. Try moving the installer or running with proper permissions." "A pasta do jogo nao permite gravacao. Tente mover o instalador ou executar com permissoes adequadas." "La carpeta do jogo nao permite escrita. Intenta mover o instalador ou executarlo con permisos adecuados.")
+        }
     }
 
     if ($Uninstall) {
@@ -3464,6 +3830,7 @@ try {
         exit 0
     }
 
+    Ensure-GameProcessesClosed $GameDir $NonInteractive
     if ($Diagnostics.HasPsdk) {
         $runningGames = @(Get-RunningGameProcesses $GameDir)
         if (-not $DryRun -and $runningGames.Count -gt 0) {
@@ -3615,6 +3982,17 @@ try {
     
     if (-not $DryRun) {
         Write-Utf8FileAtomic $DestPokeDebugMenu $pokedebugMenuContent
+        # Generate meta.txt for Essentials v20/v21 native Plugin Manager
+        $metaTxtPath = Join-Path $PluginDir "meta.txt"
+        $metaTxtContent = @"
+Name = PokeDebug
+Version = $($pluginVersion)
+Author = Kzuran
+Description = Universal Debug and Quality of Life Toolkit
+Credits = Kzuran
+"@
+        Write-Utf8FileAtomic $metaTxtPath $metaTxtContent
+
         if (Test-Path -LiteralPath $SourcePokeFallenCompat -PathType Leaf) {
             Copy-Item -LiteralPath $SourcePokeFallenCompat -Destination $DestPokeFallenCompat -Force
         }
@@ -3648,6 +4026,18 @@ try {
         $InstallReport.PreloadCopied = $true
         $InstallReport.NativeDebugBootstrap = $EnableNativeDebugBootstrap
         $InstallReport.CompilerBypassBootstrap = $DisableCompilerBootstrap
+    }
+
+    
+    $rootScript = Test-RootScriptCandidate $GameDir
+    if ($rootScript -and -not $injectionPlan.UseMkxp -and -not $injectionPlan.UseRgss -and -not $injectionPlan.UseYuri) {
+        Log "[*] Root script runner detected. Injecting preload hook into $($rootScript)..." "Cyan"
+        if (-not $DryRun) {
+            if (Inject-RootScript $rootScript) {
+                $InstallReport.Notes.Add("[+] Injected preload hook into $(Split-Path -Leaf $rootScript)")
+                Log "[+] Root script runner hook injected successfully!" "Green"
+            }
+        }
     }
 
     if ($injectionPlan.UseYuri) {

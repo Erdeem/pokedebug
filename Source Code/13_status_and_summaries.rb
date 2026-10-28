@@ -2,9 +2,25 @@ module DeveloperMenu
   class << self
     def player_badge_count
       p = get_player
-      return 0 unless p && p.respond_to?(:badges) && p.badges
-      p.badges.select { |badge| badge }.length
-    rescue
+      return 0 unless p
+      return p.badge_count if p.respond_to?(:badge_count)
+      if p.respond_to?(:badges) && p.badges
+        b = p.badges
+        return b.values.select { |v| v }.length if b.is_a?(Hash)
+        return b.select { |badge| badge }.length if b.is_a?(Array)
+        if b.is_a?(Integer)
+          cnt = 0
+          val = b
+          while val > 0
+            cnt += 1 if (val & 1) == 1
+            val >>= 1
+          end
+          return cnt
+        end
+      end
+      return $Trainer.badges.select { |badge| badge }.length if defined?($Trainer) && $Trainer.respond_to?(:badges) && $Trainer.badges.is_a?(Array)
+      0
+    rescue StandardError
       0
     end
 
@@ -135,6 +151,16 @@ module DeveloperMenu
       lines << _INTL("OT: {1}", pokemon_ot_name(pkmn))
       lines << _INTL("Nature: {1}", pkmn.nature) if pkmn.respond_to?(:nature) && pkmn.nature
       lines << _INTL("Form: {1}", pokemon_form_value(pkmn)) if pokemon_form_value(pkmn).to_i > 0
+      override_v = pokemon_form_override_value(pkmn) if respond_to?(:pokemon_form_override_value)
+      lines << _INTL("Form Override: {1} (Locked)", override_v) if !override_v.nil?
+        tera = pokemon_tera_type(pkmn) if respond_to?(:pokemon_tera_type)
+        lines << _INTL("Tera Type: {1}", tera) if tera
+        lines << _INTL("Gigantamax: YES") if respond_to?(:pokemon_gmax_factor?) && pokemon_gmax_factor?(pkmn)
+        if respond_to?(:pokemon_shadow?) && pokemon_shadow?(pkmn)
+          heart = pokemon_heart_gauge(pkmn) if respond_to?(:pokemon_heart_gauge)
+          lines << _INTL("Shadow: YES (Heart: {1})", heart || 0)
+        end
+        lines << _INTL("Fateful Encounter: YES") if respond_to?(:pokemon_fateful_encounter?) && pokemon_fateful_encounter?(pkmn)
       lines << _INTL("Shiny: {1}", pokemon_shiny_state(pkmn) ? "YES" : "NO")
       lines << _INTL("Egg: {1}", pokemon_egg_state(pkmn) ? "YES" : "NO")
       lines

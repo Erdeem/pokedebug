@@ -188,8 +188,75 @@ module DeveloperMenu
       false
     end
 
+    def battle_win_immediately!
+      battle = current_battle_object
+      return false unless battle
+      fainted_any = false
+      battle_battlers.each do |b|
+        next unless b
+        is_opp = b.opposes? if b.respond_to?(:opposes?)
+        is_opp = (b.index.to_i % 2 == 1) if !is_opp && b.respond_to?(:index)
+        if is_opp
+          b.hp = 0 if b.respond_to?(:hp=)
+          b.faint if b.respond_to?(:faint)
+          fainted_any = true
+        end
+      end
+      battle.decision = 1 if battle.respond_to?(:decision=)
+      battle.pbEndOfBattle(1) if !fainted_any && battle.respond_to?(:pbEndOfBattle)
+      refresh_battle_scene_after_heal!
+      true
+    rescue => e
+      log_error("Battle Win Immediately", e)
+      false
+    end
+
+    def battle_escape_immediately!
+      battle = current_battle_object
+      return false unless battle
+      if battle.respond_to?(:decision=)
+        battle.decision = 3
+      elsif battle.respond_to?(:pbEndOfBattle)
+        battle.pbEndOfBattle(3)
+      end
+      refresh_battle_scene_after_heal!
+      true
+    rescue => e
+      log_error("Battle Escape Immediately", e)
+      false
+    end
+
+    def battle_catch_wild_pokemon!
+      battle = current_battle_object
+      return false unless battle
+      is_wild = battle.respond_to?(:wildBattle?) ? battle.wildBattle? : false
+      return false unless is_wild
+      opponent = nil
+      battle_battlers.each do |b|
+        next unless b
+        is_opp = b.respond_to?(:opposes?) ? b.opposes? : (b.index.to_i % 2 == 1)
+        if is_opp
+          opponent = b
+          break
+        end
+      end
+      return false unless opponent
+      pkmn = opponent.pokemon if opponent.respond_to?(:pokemon)
+      pkmn = opponent.pkmn if pkmn.nil? && opponent.respond_to?(:pkmn)
+      return false unless pkmn
+      add_pkmn_silently(pkmn)
+      battle.decision = 4 if battle.respond_to?(:decision=)
+      refresh_battle_scene_after_heal!
+      true
+    rescue => e
+      log_error("Battle Catch Wild Pokemon", e)
+      false
+    end
     def battle_tools_menu
       menu = []
+      menu << battle_menu_entry(:battle_win, t(TR[:battle_win])) { run_battle_tool("Instant Win") { battle_win_immediately! } }
+      menu << battle_menu_entry(:battle_escape, t(TR[:battle_escape])) { run_battle_tool("Flee Battle") { battle_escape_immediately! } }
+      menu << battle_menu_entry(:battle_catch, t(TR[:battle_catch])) { run_battle_tool("Catch Wild") { battle_catch_wild_pokemon! } }
       menu << battle_menu_entry(:battle_direct_heal, "Heal Party") { run_battle_tool("Battle Heal") { heal_party_in_battle! } } if battle_access_enabled?(:battle_direct_heal)
       menu << battle_menu_entry(:battle_heal_active, "Heal Active Pokemon") { run_battle_tool("Active Heal") { heal_active_battle_pokemon! } } if battle_access_enabled?(:battle_heal_active)
       menu << battle_menu_entry(:battle_cure_status, "Cure Party Status") { run_battle_tool("Status Cure") { cure_party_status_in_battle! } } if battle_access_enabled?(:battle_cure_status)

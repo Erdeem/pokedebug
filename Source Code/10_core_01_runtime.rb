@@ -11,6 +11,11 @@ module DeveloperMenu
       @skip_trainer_battles = false
       @no_battles = false
       @inf_mega = false
+      @fast_forward_stage = 0
+      @fast_forward_multiplier = 1.0
+      @fast_forward_virtual_base = 0.0
+      @last_speed_change_real = 0.0
+      @original_frame_rate = nil
       @processing_hotkey = false
       @menu_open = false
       @menu_session_serial = 0
@@ -1046,7 +1051,8 @@ module DeveloperMenu
       {
         :menu => MENU_HOTKEY,
         :walk_through_walls => WTW_HOTKEY,
-        :heal_party => HEAL_HOTKEY
+        :heal_party => HEAL_HOTKEY,
+        :fast_forward => SPEED_HOTKEY
       }
     end
 

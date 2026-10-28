@@ -15,7 +15,11 @@ if /I "%~2"=="/dryrun" set EXTRA_ARGS=-DryRun
 if not "%~1"=="" (
     if exist "%~1" (
         if /I not "%~1"=="/uninstall" if /I not "%~1"=="-uninstall" if /I not "%~1"=="/restore" if /I not "%~1"=="-restore" if /I not "%~1"=="/dryrun" if /I not "%~1"=="-dryrun" (
-            set TARGET_DIR=%~1
+            if exist "%~1\" (
+                set TARGET_DIR=%~1
+            ) else (
+                set TARGET_DIR=%~dp1
+            )
         )
     )
 )
