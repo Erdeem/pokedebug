@@ -123,20 +123,27 @@ module DeveloperMenu
         if result && result[0] && result[1]
           record = result[1]
           return record.db_symbol if record.respond_to?(:db_symbol)
-          return record.id if record.respond_to?(:id)
+          return record.id if record.respond_to?(:id) && record.id.is_a?(Symbol)
         end
       end
       collection = cache_collection(type)
       if collection && collection.respond_to?(:keys)
         keys = collection.keys
-        return keys[id_or_index - 1] if id_or_index > 0 && id_or_index <= keys.size
+        return keys[id_or_index - 1] if id_or_index.is_a?(Numeric) && id_or_index > 0 && id_or_index <= keys.size
       elsif collection && collection.respond_to?(:each_with_index)
         collection.each_with_index do |entry, idx|
           next unless idx + 1 == id_or_index
-          return entry.id if entry.respond_to?(:id)
-          return entry[0] if entry.is_a?(Array) && !entry.empty?
-          return entry if [Symbol, String, Integer].any? { |klass| entry.is_a?(klass) }
+          return entry.id if entry.respond_to?(:id) && entry.id.is_a?(Symbol)
+          return entry[0] if entry.is_a?(Array) && !entry.empty? && entry[0].is_a?(Symbol)
+          return entry if entry.is_a?(Symbol)
         end
+      end
+
+      if type == :Ability && id_or_index.is_a?(Numeric) && defined?(PBAbilities)
+        found_const = PBAbilities.constants.find do |c|
+          (PBAbilities.const_get(c) rescue nil) == id_or_index.to_i
+        end
+        return found_const.to_sym if found_const
       end
 
       klass = game_data_class(type)

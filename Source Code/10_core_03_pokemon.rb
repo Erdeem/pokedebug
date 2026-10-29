@@ -47,16 +47,106 @@ module DeveloperMenu
       abils = pokemon_legal_abilities(pkmn)
       return false if abils.empty?
       if choice_index.nil?
-        cmds = abils.map { |a| a[0].to_s }
+        cmds = abils.map { |a| ability_display_name(a[0]) }
         choice_index = Kernel.pbMessage(_INTL("Choose ability:"), cmds, -1)
       end
       return false if choice_index.nil? || choice_index < 0 || choice_index >= abils.length
-      ability_symbol = abils[choice_index][0]
+      ability_raw = abils[choice_index][0]
       ability_index = abils[choice_index][1]
-      set_pokemon_ability!(pkmn, ability_symbol, ability_index)
+      set_pokemon_ability!(pkmn, ability_raw, ability_index)
     rescue => e
       log_error("Set Legal Ability", e)
       false
+    end
+
+    def resolve_ability_identifiers(ability_input, display_name = nil)
+      sym = nil
+      num = nil
+
+      if ability_input.is_a?(Symbol)
+        sym = ability_input
+      elsif ability_input.is_a?(String)
+        stripped = ability_input.strip
+        if stripped != "" && stripped !~ /^\d+$/
+          sym = stripped.to_sym
+        elsif stripped =~ /^\d+$/
+          num = stripped.to_i
+        end
+      elsif ability_input.is_a?(Numeric)
+        num = ability_input.to_i
+      end
+
+      # 1. If we have num but no sym, resolve sym
+      if num && num > 0 && !sym
+        if defined?(PBAbilities)
+          c = PBAbilities.constants.find { |cn| (PBAbilities.const_get(cn) rescue nil) == num }
+          sym = c.to_sym if c
+        end
+        if !sym && defined?(GameData) && defined?(GameData::Ability) && GameData::Ability.respond_to?(:try_get)
+          rec = GameData::Ability.try_get(num)
+          sym = rec.id if rec && rec.respond_to?(:id)
+        end
+        if !sym && defined?($cache) && $cache
+          [:abilities, :ability, :abil].each do |m|
+            next unless $cache.respond_to?(m)
+            col = $cache.send(m)
+            if col.respond_to?(:keys)
+              keys = col.keys
+              if num > 0 && num <= keys.size && keys[num - 1].is_a?(Symbol)
+                sym = keys[num - 1]
+                break
+              end
+            end
+          end
+        end
+      end
+
+      # 2. If we have sym but no num, resolve num
+      if sym && (!num || num <= 0)
+        if defined?(PBAbilities) && PBAbilities.const_defined?(sym)
+          num = (PBAbilities.const_get(sym) rescue nil)
+        end
+        if (!num || num <= 0) && defined?(GameData) && defined?(GameData::Ability) && GameData::Ability.respond_to?(:try_get)
+          rec = GameData::Ability.try_get(sym)
+          num = rec.id_number if rec && rec.respond_to?(:id_number)
+        end
+      end
+
+      # 3. If display_name given and still missing, resolve from search hash / cache
+      if (!sym || !num) && display_name && display_name.to_s.strip != ""
+        norm = normalized_item_key(display_name)
+        if defined?(PBAbilities) && PBAbilities.respond_to?(:getName)
+          PBAbilities.constants.each do |c|
+            v = (PBAbilities.const_get(c) rescue nil)
+            next unless v.is_a?(Numeric) && v > 0
+            if normalized_item_key(PBAbilities.getName(v)) == norm
+              sym ||= c.to_sym
+              num ||= v
+              break
+            end
+          end
+        end
+        if !sym && defined?($cache) && $cache
+          [:abilities, :ability, :abil].each do |m|
+            next unless $cache.respond_to?(m)
+            col = $cache.send(m)
+            if col.respond_to?(:each)
+              col.each do |k, v|
+                d_name = v.respond_to?(:name) ? v.name : nil
+                if d_name && normalized_item_key(d_name) == norm
+                  sym = k if k.is_a?(Symbol)
+                  break
+                end
+              end
+            end
+          end
+        end
+      end
+
+      [sym, num]
+    rescue => e
+      log_error("Resolve Ability Identifiers", e)
+      [sym, num]
     end
 
     def matched_ability_index_for(pkmn, ability_symbol)
@@ -92,7 +182,7 @@ module DeveloperMenu
       false
     end
 
-    def set_pokemon_internal_ability_fields!(pkmn, ability_symbol)
+    def set_pokemon_internal_ability_fields!(pkmn, ability_symbol, numeric_id = nil)
       return false unless pkmn && ability_symbol
       changed = false
       [:@ability, :@ability_id, :@abilityID, :@forcedAbility, :@forced_ability].each do |ivar|
@@ -100,16 +190,20 @@ module DeveloperMenu
         pkmn.instance_variable_set(ivar, ability_symbol)
         changed = true
       end
+      flag_val = (numeric_id && numeric_id > 0) ? numeric_id : ability_symbol
+      pkmn.instance_variable_set(:@abilityflag, flag_val)
+      changed = true
       changed
     rescue => e
       log_error("Set Internal Ability Fields", e)
       false
     end
 
-    def remember_pokemon_ability_override!(pkmn, ability_symbol, ability_index = nil)
+    def remember_pokemon_ability_override!(pkmn, ability_symbol, ability_index = nil, ability_num = nil)
       return false unless pkmn && ability_symbol
       pkmn.instance_variable_set(:@__gm_ability_override_symbol, ability_symbol)
       pkmn.instance_variable_set(:@__gm_ability_override_index, ability_index)
+      pkmn.instance_variable_set(:@__gm_ability_override_num, ability_num) if ability_num
       true
     rescue => e
       log_error("Remember Ability Override", e)
@@ -120,6 +214,9 @@ module DeveloperMenu
       return false unless pkmn
       pkmn.instance_variable_set(:@__gm_ability_override_symbol, nil) if pkmn.instance_variables.any? { |__v| __v.to_s == (:@__gm_ability_override_symbol).to_s }
       pkmn.instance_variable_set(:@__gm_ability_override_index, nil) if pkmn.instance_variables.any? { |__v| __v.to_s == (:@__gm_ability_override_index).to_s }
+      pkmn.instance_variable_set(:@__gm_ability_override_num, nil) if pkmn.instance_variables.any? { |__v| __v.to_s == (:@__gm_ability_override_num).to_s }
+      pkmn.instance_variable_set(:@abilityflag, 0)
+      pkmn.abilityflag = 0 if pkmn.respond_to?(:abilityflag=)
       true
     rescue => e
       log_error("Clear Ability Override", e)
@@ -168,29 +265,65 @@ module DeveloperMenu
 
     def apply_pokemon_ability_state!(pkmn, ability_symbol, force_index = nil)
       return false unless pkmn
-      matched_index = matched_ability_index_for(pkmn, ability_symbol)
+      sym, num = resolve_ability_identifiers(ability_symbol)
+      matched_index = matched_ability_index_for(pkmn, sym || ability_symbol)
       target_index = force_index.nil? ? matched_index : force_index
       changed = false
+
+      use_symbol = false
+      if respond_to?(:rejuvenation_engine?) && rejuvenation_engine?
+        use_symbol = true
+      elsif respond_to?(:engine_title_slug) && engine_title_slug.include?("reborn")
+        use_symbol = true
+      elsif defined?(GameData) && defined?(GameData::Ability)
+        use_symbol = true
+      elsif pkmn.respond_to?(:ability) && pkmn.ability.is_a?(Symbol)
+        use_symbol = true
+      elsif sym && (!num || num <= 0)
+        use_symbol = true
+      end
+
+      primary_val = use_symbol ? (sym || num || ability_symbol) : (num || sym || ability_symbol)
+
       if pkmn.respond_to?(:ability=)
-        pkmn.ability = ability_symbol
+        pkmn.ability = primary_val
         changed = true
       end
       if pkmn.respond_to?(:setAbility)
-        pkmn.setAbility(ability_symbol)
+        pkmn.setAbility(primary_val)
         changed = true
       end
-      if !target_index.nil? && pkmn.respond_to?(:ability_index=)
-        pkmn.ability_index = target_index
+      if pkmn.respond_to?(:ability_id=) && sym
+        pkmn.ability_id = sym
+        changed = true
+      end
+      if pkmn.respond_to?(:abilityflag=)
+        pkmn.abilityflag = (num && num > 0) ? num : primary_val
         changed = true
       end
       if !target_index.nil?
+        if pkmn.respond_to?(:ability_index=)
+          pkmn.ability_index = target_index
+          changed = true
+        end
+        if pkmn.respond_to?(:abilityIndex=)
+          pkmn.abilityIndex = target_index
+          changed = true
+        end
         changed = true if set_pokemon_hidden_ability_flags!(pkmn, target_index)
       elsif pkmn.respond_to?(:ability_index=)
         pkmn.ability_index = nil
       end
-      changed = true if set_pokemon_internal_ability_fields!(pkmn, ability_symbol)
+
+      changed = true if set_pokemon_internal_ability_fields!(pkmn, primary_val, num)
+
+      if !target_index.nil?
+        pkmn.instance_variable_set(:@ability_index, target_index)
+        pkmn.instance_variable_set(:@abilityIndex, target_index)
+      end
+
       recalc_pokemon_stats(pkmn)
-      return true if pokemon_has_ability_value?(pkmn, ability_symbol)
+      return true if pokemon_has_ability_value?(pkmn, sym || primary_val)
       changed
     rescue => e
       log_error("Apply Ability State", e)
@@ -306,11 +439,13 @@ module DeveloperMenu
 
     def set_pokemon_ability!(pkmn, ability_symbol, force_index = nil)
       return false unless pkmn
-      matched_index = matched_ability_index_for(pkmn, ability_symbol)
+      sym, num = resolve_ability_identifiers(ability_symbol)
+      target_sym = sym || ability_symbol
+      matched_index = matched_ability_index_for(pkmn, target_sym)
       target_index = force_index.nil? ? matched_index : force_index
-      changed = apply_pokemon_ability_state!(pkmn, ability_symbol, target_index)
-      remember_pokemon_ability_override!(pkmn, ability_symbol, target_index)
-      return true if pokemon_has_ability_value?(pkmn, ability_symbol)
+      changed = apply_pokemon_ability_state!(pkmn, target_sym, target_index)
+      remember_pokemon_ability_override!(pkmn, target_sym, target_index, num)
+      return true if pokemon_has_ability_value?(pkmn, target_sym)
       changed
     rescue => e
       log_error("Set Ability", e)
@@ -321,15 +456,31 @@ module DeveloperMenu
       return false unless pkmn
       clear_pokemon_ability_override!(pkmn)
       pkmn.ability_index = nil if pkmn.respond_to?(:ability_index=)
+      pkmn.abilityIndex = nil if pkmn.respond_to?(:abilityIndex=)
+      pkmn.abilityflag = 0 if pkmn.respond_to?(:abilityflag=)
       pkmn.ability = nil if pkmn.respond_to?(:ability=)
       set_pokemon_hidden_ability_flags!(pkmn, 0)
-      [:@ability, :@ability_id, :@abilityID, :@forcedAbility, :@forced_ability].each do |ivar|
+      [:@ability, :@ability_id, :@abilityID, :@forcedAbility, :@forced_ability, :@abilityflag, :@abilityIndex, :@ability_index].each do |ivar|
         pkmn.instance_variable_set(ivar, nil) if pkmn.instance_variables.any? { |__v| __v.to_s == (ivar).to_s }
       end
+      pkmn.instance_variable_set(:@abilityflag, 0)
+      recalc_pokemon_stats(pkmn)
       true
     rescue => e
       log_error("Reset Ability", e)
       false
+    end
+
+    def ensure_pokemon_ability_overrides_persistence!
+      party = player_party rescue []
+      return unless party && party.is_a?(Array)
+      party.each do |pkmn|
+        next unless pkmn
+        next unless pokemon_ability_override_active?(pkmn)
+        apply_pokemon_ability_override!(pkmn)
+      end
+    rescue StandardError => e
+      log_error("Ensure Ability Overrides Persistence", e)
     end
 
     def set_pokemon_nature!(pkmn, nature_symbol)
@@ -494,7 +645,28 @@ module DeveloperMenu
       return "None" if ability_id.nil? || ability_id == 0
       record = data_record(:Ability, ability_id)
       return record.name if record && record.respond_to?(:name) && record.name
-      return PBAbilities.getName(ability_id) if defined?(PBAbilities) && PBAbilities.respond_to?(:getName)
+      if defined?(PBAbilities) && PBAbilities.respond_to?(:getName)
+        if ability_id.is_a?(Symbol) && PBAbilities.const_defined?(ability_id)
+          num = (PBAbilities.const_get(ability_id) rescue nil)
+          name = PBAbilities.getName(num) if num
+          return name if name && name.to_s.strip != ""
+        elsif ability_id.is_a?(Numeric)
+          name = (PBAbilities.getName(ability_id) rescue nil)
+          return name if name && name.to_s.strip != ""
+        end
+      end
+      if defined?($cache) && $cache
+        [:abilities, :ability, :abil].each do |m|
+          next unless $cache.respond_to?(m)
+          col = $cache.send(m)
+          if col.respond_to?(:[])
+            cand = col[ability_id] || (col[ability_id.to_sym] if ability_id.respond_to?(:to_sym))
+            if cand && cand.respond_to?(:name) && cand.name.to_s.strip != ""
+              return cand.name
+            end
+          end
+        end
+      end
       ability_id.to_s
     rescue => e
       log_error("Ability Display Name", e)
@@ -714,8 +886,12 @@ module DeveloperMenu
               res = send(orig_m, *args)
               override = instance_variable_get(:@pokedebug_form_override)
               if !override.nil?
-                self.form = override.to_i if respond_to?(:form=)
-                self.forced_form = override.to_i if respond_to?(:forced_form=)
+                form_val = override.to_i
+                self.form = form_val if respond_to?(:form=)
+                self.forced_form = form_val if respond_to?(:forced_form=)
+                self.original_form = form_val if respond_to?(:original_form=)
+                instance_variable_set(:@original_form, form_val)
+                instance_variable_set(:@originalForm, form_val)
                 calc_stats if respond_to?(:calc_stats)
                 calcStats if respond_to?(:calcStats)
               end
@@ -735,6 +911,10 @@ module DeveloperMenu
       form = form_id.to_i
       patch_form_override_class!(pkmn.class)
       pkmn.instance_variable_set(:@pokedebug_form_override, form)
+      pkmn.instance_variable_set(:@original_form, form)
+      pkmn.instance_variable_set(:@originalForm, form)
+      pkmn.original_form = form if pkmn.respond_to?(:original_form=)
+      pkmn.originalForm = form if pkmn.respond_to?(:originalForm=)
       pkmn.forced_form = form if pkmn.respond_to?(:forced_form=)
       pkmn.form_simple = form if pkmn.respond_to?(:form_simple=)
       pkmn.form = form if pkmn.respond_to?(:form=)
@@ -754,19 +934,30 @@ module DeveloperMenu
         override = pkmn.instance_variable_get(:@pokedebug_form_override)
         next if override.nil?
         patch_form_override_class!(pkmn.class)
+        form_val = override.to_i
         current_f = pkmn.respond_to?(:form) ? pkmn.form : nil
-        if current_f != override.to_i
-          pkmn.form = override.to_i if pkmn.respond_to?(:form=)
-          pkmn.forced_form = override.to_i if pkmn.respond_to?(:forced_form=)
+        if current_f != form_val
+          pkmn.form = form_val if pkmn.respond_to?(:form=)
+          pkmn.forced_form = form_val if pkmn.respond_to?(:forced_form=)
+          pkmn.setForm(form_val) if pkmn.respond_to?(:setForm)
           recalc_pokemon_stats(pkmn)
         end
+        pkmn.instance_variable_set(:@original_form, form_val)
+        pkmn.instance_variable_set(:@originalForm, form_val)
+        pkmn.original_form = form_val if pkmn.respond_to?(:original_form=)
+        pkmn.originalForm = form_val if pkmn.respond_to?(:originalForm=)
       end
+      ensure_pokemon_ability_overrides_persistence!
     rescue StandardError => e
       log_error("Ensure Form Overrides Persistence", e)
     end
     def clear_pokemon_form_override!(pkmn)
       return false unless pkmn
       pkmn.instance_variable_set(:@pokedebug_form_override, nil)
+      pkmn.instance_variable_set(:@original_form, nil)
+      pkmn.instance_variable_set(:@originalForm, nil)
+      pkmn.original_form = 0 if pkmn.respond_to?(:original_form=)
+      pkmn.originalForm = 0 if pkmn.respond_to?(:originalForm=)
       pkmn.forced_form = nil if pkmn.respond_to?(:forced_form=)
       pkmn.form_simple = nil if pkmn.respond_to?(:form_simple=)
       pkmn.form = 0 if pkmn.respond_to?(:form=)
@@ -1073,12 +1264,23 @@ module DeveloperMenu
     def set_pokemon_ability_slot!(pkmn, slot_index)
       return false unless pkmn
       idx = slot_index.to_i
+      changed = false
       if pkmn.respond_to?(:ability_index=)
         pkmn.ability_index = idx
-        pkmn.reset_moves if pkmn.respond_to?(:reset_moves)
-        return true
+        changed = true
       end
-      false
+      if pkmn.respond_to?(:abilityIndex=)
+        pkmn.abilityIndex = idx
+        changed = true
+      end
+      pkmn.instance_variable_set(:@ability_index, idx)
+      pkmn.instance_variable_set(:@abilityIndex, idx)
+      pkmn.instance_variable_set(:@abilityflag, 0)
+      pkmn.abilityflag = 0 if pkmn.respond_to?(:abilityflag=)
+      set_pokemon_hidden_ability_flags!(pkmn, idx)
+      pkmn.reset_moves if pkmn.respond_to?(:reset_moves)
+      recalc_pokemon_stats(pkmn)
+      true
     rescue StandardError => e
       log_error("Set Ability Slot", e)
       false

@@ -926,26 +926,51 @@ module DeveloperMenu
 
     def ability_candidates_from_lookup(ability_lookup, display_name = nil)
       candidates = []
-      candidates << ability_lookup unless ability_lookup.nil?
-      candidates << ability_lookup.to_sym if ability_lookup.respond_to?(:to_sym)
-      candidates << ability_lookup.to_s if ability_lookup.respond_to?(:to_s)
+      resolved_symbol = nil
 
       if ability_lookup.is_a?(Integer) && ability_lookup > 0
         begin
           resolved_symbol = get_symbol(:Ability, ability_lookup)
-          candidates << resolved_symbol unless resolved_symbol.nil?
         rescue => e
           log_error("Ability Integer Symbol Resolve", e)
         end
+      elsif ability_lookup.is_a?(Symbol)
+        resolved_symbol = ability_lookup
       end
+
+      prefer_symbol = false
+      if respond_to?(:rejuvenation_engine?) && rejuvenation_engine?
+        prefer_symbol = true
+      elsif respond_to?(:engine_title_slug) && engine_title_slug.include?("reborn")
+        prefer_symbol = true
+      elsif defined?(GameData) && defined?(GameData::Ability)
+        prefer_symbol = true
+      end
+
+      if prefer_symbol
+        candidates << resolved_symbol if resolved_symbol.is_a?(Symbol)
+        candidates << ability_lookup.to_sym if ability_lookup.respond_to?(:to_sym) && ability_lookup.to_s !~ /^\d+$/
+        candidates << ability_lookup unless ability_lookup.nil?
+      else
+        candidates << resolved_symbol if resolved_symbol.is_a?(Symbol)
+        candidates << ability_lookup unless ability_lookup.nil?
+        candidates << ability_lookup.to_sym if ability_lookup.respond_to?(:to_sym)
+      end
+      candidates << ability_lookup.to_s if ability_lookup.respond_to?(:to_s)
 
       if display_name && display_name.to_s.strip != ""
         normalized_display = normalized_item_key(display_name)
         begin
           build_search_hash(:Ability).each do |ability_id, ability_name|
             next unless normalized_item_key(ability_name) == normalized_display
-            candidates << ability_id
-            candidates << get_symbol(:Ability, ability_id)
+            sym = get_symbol(:Ability, ability_id)
+            if prefer_symbol
+              candidates << sym if sym.is_a?(Symbol)
+              candidates << ability_id
+            else
+              candidates << ability_id
+              candidates << sym if sym.is_a?(Symbol)
+            end
           end
         rescue => e
           log_error("Ability Candidates From Lookup", e)

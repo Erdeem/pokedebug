@@ -58,7 +58,7 @@ if ($script:GameDirWasDefault -and -not [string]::IsNullOrWhiteSpace($env:POKEDE
 }
 
 $ErrorActionPreference = "Stop"
-$PokeDebugInstallerVersion = "3.5.0"
+$PokeDebugInstallerVersion = "3.5.1"
 
 # Supported hosts:
 # - Windows PowerShell 5.1 or newer Desktop edition
@@ -3721,7 +3721,7 @@ try {
                     (Test-Path (Join-Path $ResolvedProbeDir "preload_menu.rb") -PathType Leaf) -or
                     (Test-Path (Join-Path $ResolvedProbeDir "preload_gm.rb") -PathType Leaf)
                 if ($alreadyInstalled) {
-                    $installedVer = "3.5.0"
+                    $installedVer = "3.5.1"
                     $manifestFile = Join-Path $ResolvedProbeDir "PokeDebug_Install_Manifest.json"
                     if (Test-Path -LiteralPath $manifestFile -PathType Leaf) {
                         try {

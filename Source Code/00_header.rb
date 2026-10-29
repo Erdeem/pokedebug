@@ -18,7 +18,7 @@ unless Symbol.method_defined?(:to_proc)
 end
 
 module DeveloperMenu
-  VERSION = '3.5.0'
+  VERSION = '3.5.1'
   LOG_FILE_NAME = 'developer_menu_errors.log'
   STATE_FILE_NAME = 'developer_menu_boot_state.dat'
   LANG = 'en'

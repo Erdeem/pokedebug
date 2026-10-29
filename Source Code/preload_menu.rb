@@ -10,7 +10,7 @@ POKEDEBUG_BOOT_FLAGS = {
 POKEDEBUG_BOOTSTRAP_STATUS = :idle unless defined?(POKEDEBUG_BOOTSTRAP_STATUS)
 
 module PokeDebugBootstrap
-  VERSION = "3.5.0".freeze unless const_defined?(:VERSION)
+  VERSION = "3.5.1".freeze unless const_defined?(:VERSION)
   LOG_FILE_NAME = "developer_menu_errors.log".freeze unless const_defined?(:LOG_FILE_NAME)
   STATE_FILE_NAME = "developer_menu_boot_state.dat".freeze unless const_defined?(:STATE_FILE_NAME)
   PATCH_REGISTRY = {} unless const_defined?(:PATCH_REGISTRY)

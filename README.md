@@ -1,37 +1,10 @@
-# PokeDebug 3.5.0
+# PokeDebug 
 
 PokeDebug is a universal cheat menu and quality-of-life developer toolkit engineered for Pokemon fangames built with Pokemon Essentials, MKXP, MKXP-Z, PSDK, TRuby, Kurisu VM, classic RGSS, and JoiPlay (Android).
 
 The project combines a modular Ruby runtime with a self-contained, single-file Windows installer. It automatically detects the target game's engine layout, chooses the optimal injection strategy, and enforces strict compatibility fallbacks across Ruby 1.8.1 through 3.3+.
 
 > **Notice:** PokeDebug modifies game scripts and variables. Always keep a separate backup of your game folder and save files before installing or using destructive debug actions.
-
----
-
-## What's New in v3.5.0
-
-- **Universal Dual-Rail Fast Forward**:
-  - Accelerates gameplay smoothly using dual-rail scaling: Frame-Rate scaling for classic RGSS/MKXP and a Continuous Virtual Accumulator Clock (C0 continuous) for delta-time engines (Essentials v20/v21+), eliminating animation out-of-bounds crashes. Default hotkey: `F8`.
-- **Form Override (Lock Form)**:
-  - Forces Pokemon to remain in a specific form permanently across battles. Ideal for Mega Evolutions, Primal Reversions, and regional variants that would normally revert after battle.
-- **Generation 9 & 8 Modern Attributes**:
-  - Full support for **Tera Type** (view and set any Tera Type via search) and **Gigantamax Factor** (`gmax_factor`) toggling.
-- **Shadow Pokemon & Heart Gauge Controls**:
-  - Transform Pokemon into Shadow state, purify instantly, or adjust Heart Gauge (0 to 30,000) for Colosseum/XD mechanics and fangames.
-- **Overworld Weather & Lighting Simulator**:
-  - Change overworld map weather on the fly (Clear, Rain, Storm, Snow, Blizzard, Sandstorm, Harsh Sun, Fog, Heavy Rain) and test Day/Night lighting tones.
-- **Emergency & Recovery Tools**:
-  - **Force / Emergency Save**: Save your game anywhere, even during cutscenes or on maps where saving is disabled (`save_disabled = true`).
-  - **Emergency Unstuck**: Freezes, collision blocks, and stuck event loops can be cleared with 1 click.
-  - **Manual Coordinate Warp**: Teleport to any Map ID, X, and Y even in 100% encrypted games without `MapInfos.rxdata`.
-- **Foolproof Smart Installer**:
-  - **WinRAR/7-Zip Safety**: Detects and warns if run inside temporary unextracted archive folders.
-  - **Automatic GUI File Picker**: Opens a native Windows dialog to choose `Game.exe` if the installer is run outside the game folder.
-  - **Drag-and-Drop**: Drag `Game.exe` directly onto `PokeDebug_Installer.cmd`.
-  - **Auto-Close Running Games**: Detects open game processes and offers to close them smoothly before file injection.
-  - **UAC Auto-Elevation**: Automatically requests Administrator privileges if the game is located in protected folders (like `Program Files`).
-  - **GitHub Auto-Update**: Queries `https://github.com/Erdeem/pokedebug` on startup and offers 1-click self-updating when new versions are released.
-  - **Infinite Fusion Memory Guard**: Protects against RAM exhaustion in games with over 170,000 fusion combinations.
 
 ---
 
@@ -85,7 +58,7 @@ pbDeveloperMenu
 
 ## Installation
 
-1. Download **`PokeDebug_Installer.cmd`** (or **`PokeDebug_Installer_Release.cmd`** for the public release).
+1. Download **`PokeDebug_Installer.cmd`**.
 2. Place it in your game's root folder (where `Game.exe` is located).
    *(If opened elsewhere, the installer will automatically open a window asking you to select `Game.exe`).*
 3. Close the game completely.
@@ -131,11 +104,6 @@ pbDeveloperMenu
    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Build-Master.ps1
    ```
 
-4. **Build the public GitHub release (`PokeDebug_Installer_Release.cmd`)**:
-   ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Build-Master-2.ps1
-   ```
-
 ---
 
 ## Project Structure
@@ -170,15 +138,3 @@ PokeDebug/
 
 ---
 
-## Credits
-
-- **Kzuran** - Creator & Lead Developer
-- **Erdeem** - Co-maintainer & GitHub Release Host
-
----
-
-## Project Status / Mensagem
-
-**EN:** PokeDebug 3.5.0 represents the definitive, universal release supporting both classic and modern Pokemon fangames. Feel free to fork the repository or submit pull requests.
-
-**PT-BR:** O PokeDebug 3.5.0 representa o lancamento definitivo e universal com suporte tanto a fangames classicos quanto modernos. Sinta-se livre para fazer um fork ou enviar um pull request.

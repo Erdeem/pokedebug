@@ -815,6 +815,27 @@ class << ::DeveloperMenu
     ].compact.each do |klass|
       patch_battler_ability_override_class!(klass)
     end
+    [
+      safe_const_get(Object, :PokeBattle_Battle),
+      safe_const_get(battle_module, :Battle)
+    ].compact.each do |klass|
+      patch_battle_ability_and_form_persistence_class!(klass)
+    end
+
+    if Kernel.respond_to?(:pbMessage)
+      Kernel.module_eval do
+        unless method_defined?(:_pokedebug_orig_pbMessage_suppress_dev)
+          alias_method :_pokedebug_orig_pbMessage_suppress_dev, :pbMessage
+          def pbMessage(message, *args, &block)
+            if message.is_a?(String) && message.include?("original form was not set")
+              return true
+            end
+            _pokedebug_orig_pbMessage_suppress_dev(message, *args, &block)
+          end
+        end
+      end
+    end
+
     $_gm_ability_override_patch_applied = true
     true
   rescue => e
@@ -826,9 +847,17 @@ class << ::DeveloperMenu
     return false unless klass
     make_alias(:_gm_orig_ability_dev, :ability, klass)
     make_alias(:_gm_orig_ability_writer_dev, :ability=, klass)
+    make_alias(:_gm_orig_ability_id_dev, :ability_id, klass)
+    make_alias(:_gm_orig_ability_id_writer_dev, :ability_id=, klass)
+    make_alias(:_gm_orig_ability_index_writer_dev, :ability_index=, klass)
+    make_alias(:_gm_orig_abilityIndex_writer_dev, :abilityIndex=, klass)
+    make_alias(:_gm_orig_abilityflag_writer_dev, :abilityflag=, klass)
     make_alias(:_gm_orig_setAbility_dev, :setAbility, klass)
     make_alias(:_gm_orig_calc_stats_dev, :calc_stats, klass)
     make_alias(:_gm_orig_calcStats_dev, :calcStats, klass)
+    make_alias(:_gm_orig_reset_moves_dev, :reset_moves, klass)
+    make_alias(:_gm_orig_pbResetForm_dev, :pbResetForm, klass)
+    make_alias(:_gm_orig_resetForm_dev, :resetForm, klass)
     make_alias(:_gm_orig_setForm_dev, :setForm, klass)
     make_alias(:_gm_orig_form_writer_dev, :form=, klass)
     make_alias(:_gm_orig_species_writer_dev, :species=, klass)
@@ -839,6 +868,14 @@ class << ::DeveloperMenu
           override = ::DeveloperMenu.pokemon_ability_override_symbol(self)
           if override && !::DeveloperMenu.applying_pokemon_ability_override?(self)
             ::DeveloperMenu.apply_pokemon_ability_override!(self)
+            if defined?(GameData) && defined?(GameData::Ability) && GameData::Ability.respond_to?(:try_get)
+              data = GameData::Ability.try_get(override)
+              return data if data
+            end
+            if defined?(PBAbilities) && !defined?(GameData) && !::DeveloperMenu.rejuvenation_engine? && !::DeveloperMenu.engine_title_slug.include?("reborn")
+              numeric = (PBAbilities.const_get(override) rescue nil)
+              return numeric if numeric && numeric > 0
+            end
             return override
           end
           return _gm_orig_ability_dev(*args) if defined?(_gm_orig_ability_dev)
@@ -846,6 +883,22 @@ class << ::DeveloperMenu
         rescue => e
           ::DeveloperMenu.log_error("Ability Override Getter", e) if ::DeveloperMenu.respond_to?(:log_error)
           return _gm_orig_ability_dev(*args) if defined?(_gm_orig_ability_dev)
+          nil
+        end
+      end
+
+      if ::DeveloperMenu.module_has_method?(self, :ability_id)
+        def ability_id(*args)
+          override = ::DeveloperMenu.pokemon_ability_override_symbol(self)
+          if override && !::DeveloperMenu.applying_pokemon_ability_override?(self)
+            ::DeveloperMenu.apply_pokemon_ability_override!(self)
+            return override
+          end
+          return _gm_orig_ability_id_dev(*args) if defined?(_gm_orig_ability_id_dev)
+          override
+        rescue => e
+          ::DeveloperMenu.log_error("Ability Override ability_id", e) if ::DeveloperMenu.respond_to?(:log_error)
+          return _gm_orig_ability_id_dev(*args) if defined?(_gm_orig_ability_id_dev)
           nil
         end
       end
@@ -863,6 +916,31 @@ class << ::DeveloperMenu
             raise e
           end
         end
+      end
+
+      [
+        [:ability_id=, :_gm_orig_ability_id_writer_dev],
+        [:ability_index=, :_gm_orig_ability_index_writer_dev],
+        [:abilityIndex=, :_gm_orig_abilityIndex_writer_dev],
+        [:abilityflag=, :_gm_orig_abilityflag_writer_dev],
+        [:reset_moves, :_gm_orig_reset_moves_dev],
+        [:pbResetForm, :_gm_orig_pbResetForm_dev],
+        [:resetForm, :_gm_orig_resetForm_dev]
+      ].each do |method_name, alias_name|
+        next unless ::DeveloperMenu.module_has_method?(self, method_name)
+        define_method(method_name) do |*args|
+          begin
+            result = respond_to?(alias_name, true) ? send(alias_name, *args) : nil
+            if ::DeveloperMenu.pokemon_ability_override_active?(self) && !::DeveloperMenu.applying_pokemon_ability_override?(self)
+              ::DeveloperMenu.apply_pokemon_ability_override!(self)
+            end
+            result
+          rescue => e
+            ::DeveloperMenu.log_error("Ability Override #{method_name}", e) if ::DeveloperMenu.respond_to?(:log_error)
+            raise e
+          end
+        end
+        ruby2_keywords(method_name) if respond_to?(:ruby2_keywords, true)
       end
 
       if ::DeveloperMenu.module_has_method?(self, :setAbility)
@@ -968,26 +1046,39 @@ class << ::DeveloperMenu
   def patch_battler_ability_override_class!(klass)
     return false unless klass
     {
+      :pbInitialize => :_gm_orig_battler_pbInitialize_dev,
+      :pbInitPokemon => :_gm_orig_battler_pbInitPokemon_dev,
+      :pbResetForm => :_gm_orig_battler_pbResetForm_dev,
+      :resetForm => :_gm_orig_battler_resetForm_dev,
       :pbMegaEvolve => :_gm_orig_battler_pbMegaEvolve_dev,
       :megaEvolve => :_gm_orig_battler_megaEvolve_dev,
       :mega_evolve => :_gm_orig_battler_mega_evolve_dev,
       :makeMega => :_gm_orig_battler_makeMega_dev,
       :make_mega => :_gm_orig_battler_make_mega_dev,
       :setForm => :_gm_orig_battler_setForm_dev,
-      :form= => :_gm_orig_battler_form_writer_dev
+      :form= => :_gm_orig_battler_form_writer_dev,
+      :ability= => :_gm_orig_battler_ability_writer_dev,
+      :ability_id= => :_gm_orig_battler_ability_id_writer_dev
     }.each do |method_name, alias_name|
       make_alias(alias_name, method_name, klass)
     end
 
     klass.class_eval do
-      {
-        :pbMegaEvolve => :_gm_orig_battler_pbMegaEvolve_dev,
-        :megaEvolve => :_gm_orig_battler_megaEvolve_dev,
-        :mega_evolve => :_gm_orig_battler_mega_evolve_dev,
-        :makeMega => :_gm_orig_battler_makeMega_dev,
-        :make_mega => :_gm_orig_battler_make_mega_dev,
-        :setForm => :_gm_orig_battler_setForm_dev
-      }.each do |method_name, alias_name|
+      [
+        [:pbInitialize, :_gm_orig_battler_pbInitialize_dev],
+        [:pbInitPokemon, :_gm_orig_battler_pbInitPokemon_dev],
+        [:pbResetForm, :_gm_orig_battler_pbResetForm_dev],
+        [:resetForm, :_gm_orig_battler_resetForm_dev],
+        [:pbMegaEvolve, :_gm_orig_battler_pbMegaEvolve_dev],
+        [:megaEvolve, :_gm_orig_battler_megaEvolve_dev],
+        [:mega_evolve, :_gm_orig_battler_mega_evolve_dev],
+        [:makeMega, :_gm_orig_battler_makeMega_dev],
+        [:make_mega, :_gm_orig_battler_make_mega_dev],
+        [:setForm, :_gm_orig_battler_setForm_dev],
+        [:form=, :_gm_orig_battler_form_writer_dev],
+        [:ability=, :_gm_orig_battler_ability_writer_dev],
+        [:ability_id=, :_gm_orig_battler_ability_id_writer_dev]
+      ].each do |method_name, alias_name|
         next unless ::DeveloperMenu.module_has_method?(self, method_name)
         define_method(method_name) do |*args|
           begin
@@ -1001,23 +1092,47 @@ class << ::DeveloperMenu
         end
         ruby2_keywords(method_name) if respond_to?(:ruby2_keywords, true)
       end
-
-      if ::DeveloperMenu.module_has_method?(self, :form=)
-        define_method(:form=) do |value|
-          begin
-            result = defined?(_gm_orig_battler_form_writer_dev) ? _gm_orig_battler_form_writer_dev(value) : value
-            ::DeveloperMenu.reapply_runtime_ability_override!(self)
-            result
-          rescue => e
-            ::DeveloperMenu.log_error("Battler Ability Override form=", e) if ::DeveloperMenu.respond_to?(:log_error)
-            raise e
-          end
-        end
-      end
     end
     true
   rescue => e
     log_error("Patch Battler Ability Override Class #{klass}", e)
+    false
+  end
+
+  def patch_battle_ability_and_form_persistence_class!(klass)
+    return false unless klass
+    {
+      :pbEndOfBattle => :_gm_orig_battle_pbEndOfBattle_dev,
+      :pbEndOfBattlePrimitive => :_gm_orig_battle_pbEndOfBattlePrimitive_dev,
+      :pbEndPrimitive => :_gm_orig_battle_pbEndPrimitive_dev
+    }.each do |method_name, alias_name|
+      make_alias(alias_name, method_name, klass)
+    end
+
+    klass.class_eval do
+      [
+        [:pbEndOfBattle, :_gm_orig_battle_pbEndOfBattle_dev],
+        [:pbEndOfBattlePrimitive, :_gm_orig_battle_pbEndOfBattlePrimitive_dev],
+        [:pbEndPrimitive, :_gm_orig_battle_pbEndPrimitive_dev]
+      ].each do |method_name, alias_name|
+        next unless ::DeveloperMenu.module_has_method?(self, method_name)
+        define_method(method_name) do |*args|
+          begin
+            result = respond_to?(alias_name, true) ? send(alias_name, *args) : nil
+            ::DeveloperMenu.ensure_pokemon_form_overrides_persistence!
+            ::DeveloperMenu.ensure_pokemon_ability_overrides_persistence!
+            result
+          rescue => e
+            ::DeveloperMenu.log_error("Battle End Persistence #{method_name}", e) if ::DeveloperMenu.respond_to?(:log_error)
+            raise e
+          end
+        end
+        ruby2_keywords(method_name) if respond_to?(:ruby2_keywords, true)
+      end
+    end
+    true
+  rescue => e
+    log_error("Patch Battle Persistence Class #{klass}", e)
     false
   end
 
